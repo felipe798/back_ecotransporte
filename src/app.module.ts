@@ -46,6 +46,10 @@ const resetDb = process.env.DB_RESET === 'true';
       password: process.env.PS_DBPASSWORD,
       database: process.env.PS_DATABASE,
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      // add SSL settings required by managed Postgres providers like Neon
+      ssl: process.env.PS_DBSSL === 'true' || process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : false,
       // synchronize and dropSchema are dangerous in production. they are
       // enabled only when not running in prod **or** when DB_RESET=true.
       // NOTE: once the schema has been created/updated on the live instance
