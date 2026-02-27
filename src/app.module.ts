@@ -24,6 +24,11 @@ import { UserEntity } from './user/entities/users.entity';
 import { RoleEntity } from './roles/entities/role.entity';
 
 
+
+// compute flags before module metadata; functions can't be called inside array
+const isProd = process.env.NODE_ENV === 'production';
+const resetDb = process.env.DB_RESET === 'true';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -32,6 +37,7 @@ import { RoleEntity } from './roles/entities/role.entity';
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, 'assets'),
     }),
+
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.PS_DBHOST,
@@ -40,7 +46,13 @@ import { RoleEntity } from './roles/entities/role.entity';
       password: process.env.PS_DBPASSWORD,
       database: process.env.PS_DATABASE,
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: true,
+      // synchronize and dropSchema are dangerous in production. they are
+      // enabled only when not running in prod **or** when DB_RESET=true.
+      // NOTE: once the schema has been created/updated on the live instance
+      // you should remove or set DB_RESET to false; leaving it on will erase
+      // all data on every restart.
+      synchronize: !isProd || resetDb,
+      dropSchema: !isProd || resetDb,
       autoLoadEntities: true,
     }),
     TypeOrmModule.forFeature([UserEntity, RoleEntity]),
