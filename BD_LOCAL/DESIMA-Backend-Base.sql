@@ -2,7 +2,7 @@
 -- DESIMA Backend - PostgreSQL Database Setup
 -- =============================================
 -- Forzar encoding UTF8 para caracteres especiales (ñ, ó, etc.)
-\encoding UTF8
+--\encoding UTF8
 
 -- Crear base de datos (ejecutar como superusuario)
 -- CREATE DATABASE desima;
@@ -10,8 +10,8 @@
 -- =============================================
 -- LIMPIAR TABLAS EXISTENTES (orden inverso por FK)
 -- =============================================
-DROP TABLE IF EXISTS client_tariff CASCADE;
-DROP TABLE IF EXISTS documents CASCADE;
+-- DROP TABLE IF EXISTS client_tariff CASCADE;
+-- DROP TABLE IF EXISTS documents CASCADE;
 DROP TABLE IF EXISTS unidad CASCADE;
 DROP TABLE IF EXISTS empresa_transporte CASCADE;
 DROP TABLE IF EXISTS user_address CASCADE;
@@ -106,52 +106,53 @@ CREATE TABLE IF NOT EXISTS unidad (
 -- =============================================
 -- TABLA: documents (Guías de Remisión)
 -- =============================================
-CREATE TABLE IF NOT EXISTS documents (
-    id                      SERIAL PRIMARY KEY,
-    uploaded_by             INTEGER REFERENCES "user"(id),
-    pdf_file_path           VARCHAR(500),
-    pdf_original_name       VARCHAR(255),
-    -- Relación con unidad (placa)
-    unidad_id               INTEGER REFERENCES unidad(id),
-    -- Campos de auditoría
-    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_by              INTEGER REFERENCES "user"(id),
-    -- Campos extraídos del PDF
-    mes                     VARCHAR(50),
-    semana                  VARCHAR(50),
-    fecha                   DATE,
-    grt                     VARCHAR(100),
-    transportista           VARCHAR(255),
-    unidad                  VARCHAR(100),
-    empresa                 VARCHAR(255),
-    tn_enviado              DECIMAL(10, 2),
-    deposito                VARCHAR(255),
-    tn_recibida             DECIMAL(10, 2),
-    tn_recibida_data_cruda  DECIMAL(10, 2),
-    ticket                  VARCHAR(255),
-    grr                     VARCHAR(100),
-    cliente                 VARCHAR(255),
-    partida                 VARCHAR(255),
-    llegada                 VARCHAR(255),
-    transportado            VARCHAR(255),
-    -- Campos financieros
-    precio_unitario         DECIMAL(10, 2),
-    divisa                  VARCHAR(10),
-    precio_final            DECIMAL(12, 2),
-    pcosto                  DECIMAL(10, 2),
-    divisa_cost             VARCHAR(10),
-    costo_final             DECIMAL(12, 2),
-    margen_operativo        DECIMAL(12, 2),
-    -- Factura
-    factura                 VARCHAR(255),
-    -- Archivos adjuntos (URLs de Cloudinary)
-    documentos              TEXT[],
-    -- Estado de anulación
-    anulado                 BOOLEAN DEFAULT false,
-    -- URLs almacenadas en Cloudinary (arreglo de texto)
-    documentos             TEXT[]
-);
+-- La tabla ya existe, no se crea de nuevo.
+-- CREATE TABLE IF NOT EXISTS documents (
+--     id                      SERIAL PRIMARY KEY,
+--     uploaded_by             INTEGER REFERENCES "user"(id),
+--     pdf_file_path           VARCHAR(500),
+--     pdf_original_name       VARCHAR(255),
+--     -- Relación con unidad (placa)
+--     unidad_id               INTEGER REFERENCES unidad(id),
+--     -- Campos de auditoría
+--     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     updated_by              INTEGER REFERENCES "user"(id),
+--     -- Campos extraídos del PDF
+--     mes                     VARCHAR(50),
+--     semana                  VARCHAR(50),
+--     fecha                   DATE,
+--     grt                     VARCHAR(100),
+--     transportista           VARCHAR(255),
+--     unidad                  VARCHAR(100),
+--     empresa                 VARCHAR(255),
+--     tn_enviado              DECIMAL(10, 2),
+--     deposito                VARCHAR(255),
+--     tn_recibida             DECIMAL(10, 2),
+--     tn_recibida_data_cruda  DECIMAL(10, 2),
+--     ticket                  VARCHAR(255),
+--     grr                     VARCHAR(100),
+--     cliente                 VARCHAR(255),
+--     partida                 VARCHAR(255),
+--     llegada                 VARCHAR(255),
+--     transportado            VARCHAR(255),
+--     -- Campos financieros
+--     precio_unitario         DECIMAL(10, 2),
+--     divisa                  VARCHAR(10),
+--     precio_final            DECIMAL(12, 2),
+--     pcosto                  DECIMAL(10, 2),
+--     divisa_cost             VARCHAR(10),
+--     costo_final             DECIMAL(12, 2),
+--     margen_operativo        DECIMAL(12, 2),
+--     -- Factura
+--     factura                 VARCHAR(255),
+--     -- Archivos adjuntos (URLs de Cloudinary)
+--     documentos              TEXT[],
+--     -- Estado de anulación
+--     anulado                 BOOLEAN DEFAULT false,
+--     -- URLs almacenadas en Cloudinary (arreglo de texto)
+--     documentos             TEXT[]
+-- );
 
 -- =============================================
 -- DATOS INICIALES
@@ -243,19 +244,20 @@ SELECT setval('documents_id_seq', 1);
 -- =============================================
 -- TABLA: client_tariff (Tarifas por Cliente)
 -- =============================================
-CREATE TABLE IF NOT EXISTS client_tariff (
-    id                   SERIAL PRIMARY KEY,
-    cliente              VARCHAR(255) NOT NULL,
-    partida              VARCHAR(255) NOT NULL,
-    llegada              VARCHAR(255) NOT NULL,
-    material             VARCHAR(255) NOT NULL,
-    "precioVentaSinIgv"  DECIMAL(15, 2) DEFAULT 0,
-    "precioVentaConIgv"  DECIMAL(15, 2) DEFAULT 0,
-    moneda               VARCHAR(50) NOT NULL,
-    "precioCostoSinIgv"  DECIMAL(15, 2) DEFAULT 0,
-    "precioCostoConIgv"  DECIMAL(15, 2) DEFAULT 0,
-    divisa               VARCHAR(50) NOT NULL
-);
+-- La tabla ya existe, no se crea de nuevo.
+-- CREATE TABLE IF NOT EXISTS client_tariff (
+--     id                   SERIAL PRIMARY KEY,
+--     cliente              VARCHAR(255) NOT NULL,
+--     partida              VARCHAR(255) NOT NULL,
+--     llegada              VARCHAR(255) NOT NULL,
+--     material             VARCHAR(255) NOT NULL,
+--     "precioVentaSinIgv"  DECIMAL(15, 2) DEFAULT 0,
+--     "precioVentaConIgv"  DECIMAL(15, 2) DEFAULT 0,
+--     moneda               VARCHAR(50) NOT NULL,
+--     "precioCostoSinIgv"  DECIMAL(15, 2) DEFAULT 0,
+--     "precioCostoConIgv"  DECIMAL(15, 2) DEFAULT 0,
+--     divisa               VARCHAR(50) NOT NULL
+-- );
 
 -- Tarifas de clientes
 INSERT INTO client_tariff (cliente, partida, llegada, material, "precioVentaSinIgv", "precioVentaConIgv", moneda, "precioCostoSinIgv", "precioCostoConIgv", divisa) VALUES
