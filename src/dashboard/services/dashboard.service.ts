@@ -47,7 +47,7 @@ export class DashboardService {
    */
   private createDocQuery(alias = 'doc') {
     return this.documentsRepository.createQueryBuilder(alias)
-      .andWhere(`${alias}.anulado = false`);
+      .where(`${alias}.anulado = :anulado`, { anulado: false });
   }
 
   /**
@@ -146,12 +146,12 @@ export class DashboardService {
   }
 
   /**
-   * Lista de guías por verificar (sin peso recibido Y sin ticket)
+   * Lista de guías por verificar (tn_recibida = tn_enviado Y sin documentos adjuntos)
    */
   async getGuiasPorVerificarList(filters?: DashboardFilters): Promise<any[]> {
     const queryBuilder = this.createDocQuery()
-      .andWhere('doc.tn_recibida_data_cruda IS NULL')
-      .andWhere('(doc.ticket IS NULL OR doc.ticket = :empty OR doc.ticket = :dash)', { empty: '', dash: '-' });
+      .andWhere('doc.tn_recibida = doc.tn_enviado')
+      .andWhere('(doc.documentos IS NULL OR array_length(doc.documentos, 1) IS NULL)');
 
     if (filters?.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
     if (filters?.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
@@ -164,13 +164,13 @@ export class DashboardService {
   }
 
   /**
-   * Guías por verificar (sin peso recibido Y sin ticket)
+   * Guías por verificar (tn_recibida = tn_enviado Y sin documentos adjuntos)
    */
   async getGuiasPorVerificar(filters?: DashboardFilters): Promise<number> {
     const queryBuilder = this.createDocQuery()
       .select('COUNT(*)', 'count')
-      .andWhere('doc.tn_recibida_data_cruda IS NULL')
-      .andWhere('(doc.ticket IS NULL OR doc.ticket = :empty OR doc.ticket = :dash)', { empty: '', dash: '-' });
+      .andWhere('doc.tn_recibida = doc.tn_enviado')
+      .andWhere('(doc.documentos IS NULL OR array_length(doc.documentos, 1) IS NULL)');
     
     if (filters?.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
     if (filters?.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
@@ -424,13 +424,21 @@ export class DashboardService {
 
   /**
    * Total de traslados (documentos cuyo transportista NO es 'DADO DE BAJA')
+   * Acepta filtros para reflejar el contexto del usuario
    */
-  async getTotalTraslados(): Promise<number> {
-    const result = await this.createDocQuery()
+  async getTotalTraslados(filters?: DashboardFilters): Promise<number> {
+    const queryBuilder = this.createDocQuery()
       .select('COUNT(*)', 'total')
-      .andWhere('doc.transportista IS NULL OR doc.transportista != :dadoDeBaja', { dadoDeBaja: 'DADO DE BAJA' })
-      .getRawOne();
-    
+      .andWhere('(doc.transportista IS NULL OR doc.transportista != :dadoDeBaja)', { dadoDeBaja: 'DADO DE BAJA' });
+
+    if (filters?.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
+    if (filters?.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
+    if (filters?.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
+    if (filters?.transportista) queryBuilder.andWhere('doc.transportista = :transportista', { transportista: filters.transportista });
+    if (filters?.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
+    if (filters?.transportado) queryBuilder.andWhere('doc.transportado = :transportado', { transportado: filters.transportado });
+
+    const result = await queryBuilder.getRawOne();
     return Number(result.total) || 0;
   }
 

@@ -14,6 +14,7 @@ import {
   HttpException,
   HttpStatus,
   Res,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -84,6 +85,7 @@ export class DocumentsController {
         message: 'Document processed successfully',
         document: result.document,
         placaNoRegistrada: result.placaNoRegistrada,
+        tarifaNoEncontrada: result.tarifaNoEncontrada,
       };
     } catch (error) {
       console.error('=== UPLOAD ERROR ===');
@@ -99,10 +101,6 @@ export class DocumentsController {
     }
   }
 
-  // ------------------------------------------------------------------
-  // Additional file management endpoints
-  // ------------------------------------------------------------------
-
   @Post(':id/files')
   @UseGuards(AuthGuard)
   @UseInterceptors(BlacklistInterceptor)
@@ -116,21 +114,14 @@ export class DocumentsController {
     @Param('id') id: number,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    console.log(`> DocumentsController.uploadFileToDocument called for docId=${id}`);
     if (!file) {
-      console.warn('uploadFileToDocument: no file received');
       throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
     }
-    console.log(`uploadFileToDocument: file ${file.originalname} size=${file.size}`);
-
     try {
       const url = await this.documentsService.uploadToCloudinary(file.buffer, file.originalname);
-      console.log('uploadFileToDocument: cloudinary returned url', url);
       const document = await this.documentsService.addFileUrl(id, url);
-      console.log('uploadFileToDocument: document record updated');
       return { success: true, url, document };
     } catch (err) {
-      console.error('uploadFileToDocument error', err);
       throw new HttpException(err.message || 'Upload failed', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
@@ -163,7 +154,6 @@ export class DocumentsController {
     @Param('idx') idx: number,
     @Res() res,
   ) {
-    console.log(`> downloadFile endpoint id=${id} idx=${idx}`);
     const doc = await this.documentsService.getDocumentById(id);
     if (!doc) {
       throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
@@ -173,7 +163,6 @@ export class DocumentsController {
       throw new HttpException('File index out of range', HttpStatus.BAD_REQUEST);
     }
     const url = list[idx];
-    // stream through service helper, which forces attachment headers
     await this.documentsService.streamRemoteFile(url, res);
   }
 
@@ -311,6 +300,27 @@ export class DocumentsController {
     return {
       success: true,
       message: 'Document deleted successfully',
+    };
+  }
+
+  @Patch(':id/recalculate')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @ApiOperation({
+    description: 'Recalculate financial fields for a document after a new tariff is created',
+    operationId: 'RecalculateDocument',
+  })
+  async recalculateDocument(@Param('id') id: number) {
+    const document = await this.documentsService.recalculateDocumentFinancials(id);
+
+    if (!document) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      success: true,
+      message: 'Financial fields recalculated',
+      data: document,
     };
   }
 }

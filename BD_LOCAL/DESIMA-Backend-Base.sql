@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS documents (
     margen_operativo        DECIMAL(12, 2),
     -- Factura
     factura                 VARCHAR(255),
+    -- Archivos adjuntos (URLs de Cloudinary)
+    documentos              TEXT[],
     -- Estado de anulación
     anulado                 BOOLEAN DEFAULT false,
     -- URLs almacenadas en Cloudinary (arreglo de texto)
@@ -257,18 +259,18 @@ CREATE TABLE IF NOT EXISTS client_tariff (
 
 -- Tarifas de clientes
 INSERT INTO client_tariff (cliente, partida, llegada, material, "precioVentaSinIgv", "precioVentaConIgv", moneda, "precioCostoSinIgv", "precioCostoConIgv", divisa) VALUES
-    ('PALTARUMI S.A.C',                   'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
-    ('ECO GOLD S.A.C',                    'LIMA-BARRANCA-PARAMONGA',         'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE AU',            23.00,        27.14,        'USD',   20.50,       24.19,        'USD'),
-    ('ECO GOLD S.A.C',                    'LA LIBERTAD-TRUJILLO-HUANCHACO',  'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE PLATA A GRANEL',44.00,        51.92,        'USD',   39.50,       46.61,        'USD'),
-    ('ECO GOLD S.A.C',                    'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
-    ('ECO GOLD S.A.C',                    'ANCASH-HUARMEY-HUARMEY',          'LIMA-BARRANCA-PARAMONGA',          'MINERAL POLIMETALICO',         3.00,         3.54,         'USD',   2.00,        2.36,         'USD'),
-    ('POLIMETALICOS DEL NORTE S.A.C',     'LA LIBERTAD-GRAN CHIMU-LUCMA',    'LA LIBERTAD-TRUJILLO-HUANCHACO',   'CONCENTRADO DE PLATA A GRANEL',31.00,        36.58,        'USD',   28.00,       33.04,        'USD'),
-    ('MONARCA GOLD S.A.C',                E'ANCASH-SANTA-NEPE\u00D1A',       'CALLAO-CALLAO-CALLAO (IMPALA)',    'CONCENTRADO DE ZN',            33.00,        38.94,        'USD',   26.50,       31.27,        'USD'),
-    ('MONARCA GOLD S.A.C',                'LA LIBERTAD-TRUJILLO-HUANCHACO',  E'ANCASH-SANTA-NEPE\u00D1A',        'MINERAL POLIMETALICO',         50.85,        60.00,        'PEN',   35.00,       41.30,        'PEN'),
+    ('PALTARUMI S.A.C.',                  'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
+    ('ECO GOLD S.A.C.',                   'LIMA-BARRANCA-PARAMONGA',         'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE AU',            23.00,        27.14,        'USD',   20.50,       24.19,        'USD'),
+    ('ECO GOLD S.A.C.',                   'LA LIBERTAD-TRUJILLO-HUANCHACO',  'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE PLATA A GRANEL',44.00,        51.92,        'USD',   39.50,       46.61,        'USD'),
+    ('ECO GOLD S.A.C.',                   'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
+    ('ECO GOLD S.A.C.',                   'ANCASH-HUARMEY-HUARMEY',          'LIMA-BARRANCA-PARAMONGA',          'MINERAL POLIMETALICO',         3.00,         3.54,         'USD',   2.00,        2.36,         'USD'),
+    ('POLIMETALICOS DEL NORTE S.A.C.',    'LA LIBERTAD-GRAN CHIMU-LUCMA',    'LA LIBERTAD-TRUJILLO-HUANCHACO',   'CONCENTRADO DE PLATA A GRANEL',31.00,        36.58,        'USD',   28.00,       33.04,        'USD'),
+    ('MONARCA GOLD S.A.C.',               E'ANCASH-SANTA-NEPE\u00D1A',       'CALLAO-CALLAO-CALLAO (IMPALA)',    'CONCENTRADO DE ZN',            33.00,        38.94,        'USD',   26.50,       31.27,        'USD'),
+    ('MONARCA GOLD S.A.C.',               'LA LIBERTAD-TRUJILLO-HUANCHACO',  E'ANCASH-SANTA-NEPE\u00D1A',        'MINERAL POLIMETALICO',         50.85,        60.00,        'PEN',   35.00,       41.30,        'PEN'),
     ('ANDES MINERAL S.A.C.',              'MATUCANA',                        'ALTAGRACIA',                       'MINERAL EN BRUTO',             66.95,        79.00,        'PEN',   50.00,       59.00,        'PEN'),
     ('PARKANO RESOURCES S.A.C.',          'CHIMBOTE',                        'CALLAO-CALLAO-CALLAO (IMPALA)',    'CONCENTRADO DE PLOMO',         110.00,       129.80,       'PEN',   90.00,       106.20,       'PEN'),
     ('GRUPO MINERA KATA DEL SUR S.A.C.',  'MATUCANA',                        'ALTAGRACIA',                       'MINERAL EN BRUTO',             66.95,        79.00,        'PEN',   50.00,       59.00,        'PEN'),
-    ('NUKLEO PERU S.A.C',                 'LIMA-LIMA-PUENTE PIEDRA',         'CALLAO-CALLAO-CALLAO',             '',                             99.00,        116.82,       'PEN',   98.00,       115.64,       'PEN')
+    ('NUKLEO PERU S.A.C.',                'LIMA-LIMA-PUENTE PIEDRA',         'CALLAO-CALLAO-CALLAO',             '',                             99.00,        116.82,       'PEN',   98.00,       115.64,       'PEN')
 ON CONFLICT DO NOTHING;
 
 -- Resetear secuencia de client_tariff

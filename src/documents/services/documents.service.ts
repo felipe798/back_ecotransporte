@@ -5,16 +5,9 @@ import { DocumentEntity } from '../entities/document.entity';
 import { OpenAIService } from '../../ai/services/openai.service';
 import { ClientTariffService } from '../../client-tariff/services/client-tariff.service';
 import { UnidadService } from '../../unidad/services/unidad.service';
-// Cloudinary is CommonJS; use require to avoid typing issues
+
 const cloudinary: any = require('cloudinary').v2;
 
-// configure cloudinary once at module load time
-// log environment values to help debug missing keys
-console.log('Cloudinary env', {
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY ? '[redacted]' : undefined,
-  api_secret: process.env.CLOUDINARY_API_SECRET ? '[redacted]' : undefined,
-});
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -36,8 +29,7 @@ export class DocumentsService {
     fileName: string,
     userId: number,
     filePath: string,
-  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; }> {
-    console.log(`> DocumentsService.uploadAndProcessDocument starting for file ${fileName} (${pdfBuffer.length} bytes)`);
+  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null; }> {
     try {
       // Enviar Buffer directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
@@ -62,8 +54,16 @@ export class DocumentsService {
         ...aiResponse.data,
       };
 
+      // Por ahora TN Recibida = TN Enviado al subir la guía
+      if (documentData.tn_enviado && !documentData.tn_recibida) {
+        documentData.tn_recibida = documentData.tn_enviado;
+      }
+
       // Normalizar campos de ubicación comparando con el tarifario
       await this.normalizeLocationFields(documentData);
+
+      // Determinar depósito según regla de negocio (basado en punto de llegada)
+      this.determineDeposito(documentData);
 
       // Log para debugging
       console.log('=== DATOS DESPUÉS DE NORMALIZACIÓN ===');
@@ -78,7 +78,7 @@ export class DocumentsService {
       await this.normalizeTransportistaNombre(documentData);
 
       // Calcular campos financieros basados en tarifario
-      await this.calculateFinancialFields(documentData);
+      const tarifaEncontrada = await this.calculateFinancialFields(documentData);
 
       // Validar y normalizar placa del vehículo
       await this.normalizeUnidad(documentData);
@@ -110,20 +110,48 @@ export class DocumentsService {
       const doc = this.documentsRepository.create(documentData);
       let savedDocument = await this.documentsRepository.save(doc);
 
-      // if the file buffer is available, upload to Cloudinary and push URL
+      // Subir el PDF original a Cloudinary y guardar URL
       try {
         const cloudUrl = await this.uploadToCloudinary(pdfBuffer, fileName);
-        savedDocument = await this.addFileUrl(savedDocument.id, cloudUrl);
+        const finalSaved = Array.isArray(savedDocument) ? savedDocument[0] : savedDocument;
+        await this.addFileUrl(finalSaved.id, cloudUrl);
+        savedDocument = await this.documentsRepository.findOne({ where: { id: finalSaved.id } });
       } catch (err) {
-        // silently ignore cloudinary failures, log for later
         console.error('Cloudinary upload failed', err);
       }
 
       const finalDoc = Array.isArray(savedDocument) ? savedDocument[0] : savedDocument;
-      return { document: finalDoc, placaNoRegistrada };
+
+      // Detectar si no se encontró tarifa
+      let tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null = null;
+      if (!tarifaEncontrada && documentData.cliente && documentData.partida) {
+        tarifaNoEncontrada = {
+          cliente: documentData.cliente || '',
+          partida: documentData.partida || '',
+          llegada: documentData.llegada || '',
+          transportado: documentData.transportado || '',
+        };
+      }
+
+      return { document: finalDoc, placaNoRegistrada, tarifaNoEncontrada };
     } catch (error) {
       throw error;
     }
+  }
+
+  /**
+   * Determina el depósito basado en el punto de llegada (regla de negocio):
+   * - Si llegada contiene "CALLAO" → "IMPALA"
+   * - En cualquier otro caso → "LOGIMINSA"
+   */
+  private determineDeposito(documentData: Partial<DocumentEntity>): void {
+    const llegada = (documentData.llegada || '').toUpperCase();
+    if (llegada.includes('CALLAO')) {
+      documentData.deposito = 'IMPALA';
+    } else {
+      documentData.deposito = 'LOGIMINSA';
+    }
+    console.log(`Depósito determinado: ${documentData.deposito} (llegada: ${documentData.llegada})`);
   }
 
   /**
@@ -188,6 +216,25 @@ export class DocumentsService {
         console.log('=== FIN VALIDACIÓN PLACA ===\n');
         return;
       }
+    }
+
+    // Intentar corregir errores de OCR + transposición de caracteres adyacentes
+    // Ej: "CSB886" → "CBS886" (transposición), "C5B840" → "CBS840" (OCR 5→S + transposición)
+    const placaVariants = this.generatePlacaVariants(unidad);
+    for (const plate of allPlates) {
+      if (!plate) continue;
+      const normalizedPlate = plate.replace(/[\s-]/g, '').toUpperCase();
+      if (placaVariants.has(normalizedPlate)) {
+        console.log(`  ✓ Match por corrección OCR/transposición: "${unidad}" → "${plate}"`);
+        documentData.unidad = plate;
+        console.log('=== FIN VALIDACIÓN PLACA ===\n');
+        return;
+      }
+    }
+
+    for (const plate of allPlates) {
+      if (!plate) continue;
+      const normalizedPlate = this.normalizeStringAggressive(plate);
       const score = this.calculateSimilarity(normalizedInput, normalizedPlate);
       if (score > bestScore) {
         bestScore = score;
@@ -516,14 +563,57 @@ export class DocumentsService {
   }
 
   /**
-   * Calcula la similitud entre dos strings usando el algoritmo de Levenshtein
+   * Genera variantes de una placa combinando correcciones OCR y transposiciones adyacentes.
+   * Cubre errores como: 5→S, 0→O, 8→B y letras intercambiadas (CSB→CBS).
+   */
+  private generatePlacaVariants(placa: string): Set<string> {
+    const variants = new Set<string>();
+    const ocrMap: Record<string, string[]> = {
+      '0': ['O'], 'O': ['0', 'Q', 'D'],
+      '8': ['B'], 'B': ['8'],
+      '1': ['I', 'L'], 'I': ['1', 'L'], 'L': ['1', 'I'],
+      '5': ['S'], 'S': ['5'],
+      '6': ['G'], 'G': ['6'],
+      '2': ['Z'], 'Z': ['2'],
+      'C': ['G'], 'V': ['Y', 'U'], 'Y': ['V'], 'U': ['V'],
+    };
+
+    // Generar variantes con una sola sustitución OCR
+    const ocrVariants = [placa];
+    for (let i = 0; i < placa.length; i++) {
+      const char = placa[i];
+      if (ocrMap[char]) {
+        for (const replacement of ocrMap[char]) {
+          ocrVariants.push(placa.substring(0, i) + replacement + placa.substring(i + 1));
+        }
+      }
+    }
+
+    // Para cada variante OCR, agregar la variante original + todas las transposiciones adyacentes
+    for (const variant of ocrVariants) {
+      variants.add(variant);
+      for (let i = 0; i < variant.length - 1; i++) {
+        const chars = variant.split('');
+        [chars[i], chars[i + 1]] = [chars[i + 1], chars[i]];
+        variants.add(chars.join(''));
+      }
+    }
+
+    // Eliminar la placa original del set (no queremos matchear consigo misma)
+    variants.delete(placa);
+    return variants;
+  }
+
+  /**
+   * Calcula la similitud entre dos strings usando Damerau-Levenshtein
+   * (transposiciones adyacentes cuentan como 1 operación, no 2)
    * Retorna un valor entre 0 y 1 (1 = idénticos)
    */
   private calculateSimilarity(str1: string, str2: string): number {
     if (str1 === str2) return 1;
     if (str1.length === 0 || str2.length === 0) return 0;
 
-    // Algoritmo de Levenshtein
+    // Algoritmo de Damerau-Levenshtein
     const matrix: number[][] = [];
 
     for (let i = 0; i <= str1.length; i++) {
@@ -541,6 +631,14 @@ export class DocumentsService {
           matrix[i][j - 1] + 1,      // inserción
           matrix[i - 1][j - 1] + cost // sustitución
         );
+        // Transposición de caracteres adyacentes (Damerau-Levenshtein)
+        if (i > 1 && j > 1 &&
+            str1[i - 1] === str2[j - 2] && str1[i - 2] === str2[j - 1]) {
+          matrix[i][j] = Math.min(
+            matrix[i][j],
+            matrix[i - 2][j - 2] + 1  // transposición = 1 operación
+          );
+        }
       }
     }
 
@@ -557,7 +655,7 @@ export class DocumentsService {
    * 2. Si no encuentra, buscar por cliente + partida + material
    * 3. Si no encuentra, buscar por cliente + partida (primera coincidencia)
    */
-  private async calculateFinancialFields(documentData: Partial<DocumentEntity>): Promise<void> {
+  private async calculateFinancialFields(documentData: Partial<DocumentEntity>): Promise<boolean> {
     const { cliente, partida, llegada, transportado, empresa, tn_recibida } = documentData;
 
     console.log('=== BUSCANDO TARIFA ===');
@@ -569,7 +667,7 @@ export class DocumentsService {
     // Si no hay datos suficientes para buscar, salir
     if (!cliente || !partida) {
       console.log('✗ Datos insuficientes para buscar tarifa');
-      return;
+      return false;
     }
 
     let tarifa = null;
@@ -642,6 +740,8 @@ export class DocumentsService {
       if (documentData.precio_final !== null && documentData.costo_final !== null) {
         documentData.margen_operativo = Number((documentData.precio_final - documentData.costo_final).toFixed(2));
       }
+      console.log('=== FIN BÚSQUEDA TARIFA ===\n');
+      return true;
     } else {
       console.log('✗ No se encontró tarifa para esta combinación');
       // No se encontró tarifa, dejar campos en null
@@ -652,9 +752,9 @@ export class DocumentsService {
       documentData.divisa_cost = null;
       documentData.costo_final = null;
       documentData.margen_operativo = null;
+      console.log('=== FIN BÚSQUEDA TARIFA ===\n');
+      return false;
     }
-    
-    console.log('=== FIN BÚSQUEDA TARIFA ===\n');
   }
 
   async getDocumentById(id: number): Promise<DocumentEntity | null> {
@@ -667,7 +767,7 @@ export class DocumentsService {
   async getAllDocuments(): Promise<DocumentEntity[]> {
     return await this.documentsRepository.find({
       relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { created_at: 'DESC' },
+      order: { fecha: 'DESC', grt: 'DESC' },
     });
   }
 
@@ -675,7 +775,7 @@ export class DocumentsService {
     return await this.documentsRepository.find({
       where: { uploaded_by: userId },
       relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { created_at: 'DESC' },
+      order: { fecha: 'DESC', grt: 'DESC' },
     });
   }
 
@@ -757,13 +857,42 @@ export class DocumentsService {
     return updated;
   }
 
-  // helpers for file URL management
-
   /**
-   * Uploads a file buffer to Cloudinary and returns the secure URL.
+   * Recalcula los campos financieros de un documento existente.
+   * Se usa después de crear una nueva tarifa para un documento que no tenía.
    */
+  async recalculateDocumentFinancials(id: number): Promise<DocumentEntity | null> {
+    const doc = await this.getDocumentById(id);
+    if (!doc) return null;
+
+    const documentData: Partial<DocumentEntity> = {
+      cliente: doc.cliente,
+      partida: doc.partida,
+      llegada: doc.llegada,
+      transportado: doc.transportado,
+      empresa: doc.empresa,
+      transportista: doc.transportista,
+      tn_recibida: doc.tn_recibida,
+    };
+
+    const found = await this.calculateFinancialFields(documentData);
+
+    if (found) {
+      await this.documentsRepository.update(id, {
+        precio_unitario: documentData.precio_unitario,
+        divisa: documentData.divisa,
+        precio_final: documentData.precio_final,
+        pcosto: documentData.pcosto,
+        divisa_cost: documentData.divisa_cost,
+        costo_final: documentData.costo_final,
+        margen_operativo: documentData.margen_operativo,
+      });
+    }
+
+    return await this.getDocumentById(id);
+  }
+
   async uploadToCloudinary(buffer: Buffer, filename: string): Promise<string> {
-    console.log(`DocumentsService.uploadToCloudinary called for filename=${filename} size=${buffer.length}`);
     return new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
@@ -772,11 +901,7 @@ export class DocumentsService {
           public_id: `${Date.now()}_${filename.replace(/\.[^/.]+$/, '')}`,
         },
         (error, result) => {
-          if (error) {
-            console.error('Cloudinary upload_stream error', error);
-            return reject(error);
-          }
-          console.log('Cloudinary upload_stream success', result?.secure_url);
+          if (error) return reject(error);
           resolve(result.secure_url);
         },
       );
@@ -784,9 +909,6 @@ export class DocumentsService {
     });
   }
 
-  /**
-   * Appends a URL to the document's documentos array.
-   */
   async addFileUrl(documentId: number, url: string): Promise<DocumentEntity> {
     const doc = await this.documentsRepository.findOne({ where: { id: documentId } });
     if (!doc) {
@@ -797,9 +919,6 @@ export class DocumentsService {
     return this.documentsRepository.save(doc);
   }
 
-  /**
-   * Removes a URL from the document's documentos array.
-   */
   async removeFileUrl(documentId: number, url: string): Promise<DocumentEntity> {
     const doc = await this.documentsRepository.findOne({ where: { id: documentId } });
     if (!doc) {
@@ -809,33 +928,23 @@ export class DocumentsService {
     return this.documentsRepository.save(doc);
   }
 
-  /**
-   * Stream a remote file (Cloudinary URL) through the server so the client
-   * can download without CORS issues.
-   */
   async streamRemoteFile(url: string, res: any, redirectCount = 0): Promise<void> {
     return new Promise((resolve, reject) => {
       if (redirectCount > 5) {
         return reject(new Error('Too many redirects'));
       }
       const client = url.startsWith('https') ? require('https') : require('http');
-      console.log(`streamRemoteFile: fetching ${url}`);
       client.get(url, (remoteRes) => {
         const { statusCode, headers } = remoteRes;
-        console.log(`streamRemoteFile: status ${statusCode}`);
         if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
-          // follow redirect
           const nextUrl = headers.location.startsWith('http') ? headers.location : new URL(headers.location, url).toString();
-          console.log(`streamRemoteFile: redirect to ${nextUrl}`);
-          remoteRes.resume(); // discard
+          remoteRes.resume();
           return this.streamRemoteFile(nextUrl, res, redirectCount + 1).then(resolve).catch(reject);
         }
         if (statusCode !== 200) {
           return reject(new Error(`Remote status ${statusCode}`));
         }
-        // compute filename
         const dispositionName = url.split('/').pop() || 'file';
-        // always force download
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="${dispositionName}"`);
         remoteRes.pipe(res);
@@ -844,4 +953,3 @@ export class DocumentsService {
     });
   }
 }
-
