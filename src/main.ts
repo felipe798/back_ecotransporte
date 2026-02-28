@@ -1,8 +1,17 @@
+import * as dotenv from 'dotenv';
+dotenv.config(); // load .env variables into process.env
+
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
+
+// validate critical envs
+if (!process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET || !process.env.CLOUDINARY_CLOUD_NAME) {
+  console.warn('⚠️ Cloudinary environment variables are not set. File uploads will fail.');
+}
+
 const PORT = process.env.PORT || 4002;
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

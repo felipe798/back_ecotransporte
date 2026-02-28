@@ -146,7 +146,9 @@ CREATE TABLE IF NOT EXISTS documents (
     -- Factura
     factura                 VARCHAR(255),
     -- Estado de anulación
-    anulado                 BOOLEAN DEFAULT false
+    anulado                 BOOLEAN DEFAULT false,
+    -- URLs almacenadas en Cloudinary (arreglo de texto)
+    documentos             TEXT[]
 );
 
 -- =============================================

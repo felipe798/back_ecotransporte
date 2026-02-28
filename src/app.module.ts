@@ -27,7 +27,9 @@ import { RoleEntity } from './roles/entities/role.entity';
 
 // compute flags before module metadata; functions can't be called inside array
 const isProd = process.env.NODE_ENV === 'production';
-const resetDb = process.env.DB_RESET === 'true';
+// dropSchema is now completely disabled; schema changes should be handled
+// via migrations or manual intervention. DB_RESET variable is deprecated.
+
 
 @Module({
   imports: [
@@ -50,13 +52,12 @@ const resetDb = process.env.DB_RESET === 'true';
       ssl: process.env.PS_DBSSL === 'true' || process.env.NODE_ENV === 'production'
         ? { rejectUnauthorized: false }
         : false,
-      // synchronize and dropSchema are dangerous in production. they are
-      // enabled only when not running in prod **or** when DB_RESET=true.
-      // NOTE: once the schema has been created/updated on the live instance
-      // you should remove or set DB_RESET to false; leaving it on will erase
-      // all data on every restart.
-      synchronize: !isProd || resetDb,
-      dropSchema: !isProd || resetDb,
+      // synchronize what the entities describe into the database schema.
+      // normally ON in development; in production we use migrations and set
+      // TYPEORM_SYNC=true temporarily if absolutely needed.
+      synchronize: process.env.TYPEORM_SYNC === 'true' || !isProd,
+      // dropSchema has been disabled entirely to avoid accidental data loss.
+      dropSchema: false,
       autoLoadEntities: true,
     }),
     TypeOrmModule.forFeature([UserEntity, RoleEntity]),

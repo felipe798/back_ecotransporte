@@ -5,6 +5,21 @@ import { DocumentEntity } from '../entities/document.entity';
 import { OpenAIService } from '../../ai/services/openai.service';
 import { ClientTariffService } from '../../client-tariff/services/client-tariff.service';
 import { UnidadService } from '../../unidad/services/unidad.service';
+// Cloudinary is CommonJS; use require to avoid typing issues
+const cloudinary: any = require('cloudinary').v2;
+
+// configure cloudinary once at module load time
+// log environment values to help debug missing keys
+console.log('Cloudinary env', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY ? '[redacted]' : undefined,
+  api_secret: process.env.CLOUDINARY_API_SECRET ? '[redacted]' : undefined,
+});
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 @Injectable()
 export class DocumentsService {
@@ -22,6 +37,7 @@ export class DocumentsService {
     userId: number,
     filePath: string,
   ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; }> {
+    console.log(`> DocumentsService.uploadAndProcessDocument starting for file ${fileName} (${pdfBuffer.length} bytes)`);
     try {
       // Enviar Buffer directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
@@ -92,7 +108,16 @@ export class DocumentsService {
 
       // Guardar en BD
       const doc = this.documentsRepository.create(documentData);
-      const savedDocument = await this.documentsRepository.save(doc);
+      let savedDocument = await this.documentsRepository.save(doc);
+
+      // if the file buffer is available, upload to Cloudinary and push URL
+      try {
+        const cloudUrl = await this.uploadToCloudinary(pdfBuffer, fileName);
+        savedDocument = await this.addFileUrl(savedDocument.id, cloudUrl);
+      } catch (err) {
+        // silently ignore cloudinary failures, log for later
+        console.error('Cloudinary upload failed', err);
+      }
 
       const finalDoc = Array.isArray(savedDocument) ? savedDocument[0] : savedDocument;
       return { document: finalDoc, placaNoRegistrada };
@@ -731,4 +756,92 @@ export class DocumentsService {
     }
     return updated;
   }
+
+  // helpers for file URL management
+
+  /**
+   * Uploads a file buffer to Cloudinary and returns the secure URL.
+   */
+  async uploadToCloudinary(buffer: Buffer, filename: string): Promise<string> {
+    console.log(`DocumentsService.uploadToCloudinary called for filename=${filename} size=${buffer.length}`);
+    return new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'auto',
+          folder: 'documents',
+          public_id: `${Date.now()}_${filename.replace(/\.[^/.]+$/, '')}`,
+        },
+        (error, result) => {
+          if (error) {
+            console.error('Cloudinary upload_stream error', error);
+            return reject(error);
+          }
+          console.log('Cloudinary upload_stream success', result?.secure_url);
+          resolve(result.secure_url);
+        },
+      );
+      stream.end(buffer);
+    });
+  }
+
+  /**
+   * Appends a URL to the document's documentos array.
+   */
+  async addFileUrl(documentId: number, url: string): Promise<DocumentEntity> {
+    const doc = await this.documentsRepository.findOne({ where: { id: documentId } });
+    if (!doc) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+    doc.documentos = doc.documentos || [];
+    doc.documentos.push(url);
+    return this.documentsRepository.save(doc);
+  }
+
+  /**
+   * Removes a URL from the document's documentos array.
+   */
+  async removeFileUrl(documentId: number, url: string): Promise<DocumentEntity> {
+    const doc = await this.documentsRepository.findOne({ where: { id: documentId } });
+    if (!doc) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+    doc.documentos = (doc.documentos || []).filter(u => u !== url);
+    return this.documentsRepository.save(doc);
+  }
+
+  /**
+   * Stream a remote file (Cloudinary URL) through the server so the client
+   * can download without CORS issues.
+   */
+  async streamRemoteFile(url: string, res: any, redirectCount = 0): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (redirectCount > 5) {
+        return reject(new Error('Too many redirects'));
+      }
+      const client = url.startsWith('https') ? require('https') : require('http');
+      console.log(`streamRemoteFile: fetching ${url}`);
+      client.get(url, (remoteRes) => {
+        const { statusCode, headers } = remoteRes;
+        console.log(`streamRemoteFile: status ${statusCode}`);
+        if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
+          // follow redirect
+          const nextUrl = headers.location.startsWith('http') ? headers.location : new URL(headers.location, url).toString();
+          console.log(`streamRemoteFile: redirect to ${nextUrl}`);
+          remoteRes.resume(); // discard
+          return this.streamRemoteFile(nextUrl, res, redirectCount + 1).then(resolve).catch(reject);
+        }
+        if (statusCode !== 200) {
+          return reject(new Error(`Remote status ${statusCode}`));
+        }
+        // compute filename
+        const dispositionName = url.split('/').pop() || 'file';
+        // always force download
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${dispositionName}"`);
+        remoteRes.pipe(res);
+        remoteRes.on('end', () => resolve());
+      }).on('error', reject);
+    });
+  }
 }
+

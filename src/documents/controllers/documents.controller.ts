@@ -13,6 +13,7 @@ import {
   Request,
   HttpException,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -45,11 +46,16 @@ export class DocumentsController {
     @UploadedFile() file: Express.Multer.File,
     @Request() req,
   ) {
+    console.log('> DocumentsController.uploadDocument called');
     if (!file) {
+      console.warn('uploadDocument: no file received');
       throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
     }
 
+    console.log(`uploadDocument: received file ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
+
     if (file.mimetype !== 'application/pdf') {
+      console.warn('uploadDocument: invalid mimetype', file.mimetype);
       throw new HttpException(
         'Only PDF files are allowed',
         HttpStatus.BAD_REQUEST,
@@ -71,6 +77,8 @@ export class DocumentsController {
         filePath,
       );
 
+      console.log('uploadDocument: document processed successfully, id=', result.document?.id);
+
       return {
         success: true,
         message: 'Document processed successfully',
@@ -89,6 +97,84 @@ export class DocumentsController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Additional file management endpoints
+  // ------------------------------------------------------------------
+
+  @Post(':id/files')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    description: 'Upload an image or PDF to Cloudinary and attach its URL to the document',
+    operationId: 'UploadFileToDocument',
+  })
+  async uploadFileToDocument(
+    @Param('id') id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    console.log(`> DocumentsController.uploadFileToDocument called for docId=${id}`);
+    if (!file) {
+      console.warn('uploadFileToDocument: no file received');
+      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
+    }
+    console.log(`uploadFileToDocument: file ${file.originalname} size=${file.size}`);
+
+    try {
+      const url = await this.documentsService.uploadToCloudinary(file.buffer, file.originalname);
+      console.log('uploadFileToDocument: cloudinary returned url', url);
+      const document = await this.documentsService.addFileUrl(id, url);
+      console.log('uploadFileToDocument: document record updated');
+      return { success: true, url, document };
+    } catch (err) {
+      console.error('uploadFileToDocument error', err);
+      throw new HttpException(err.message || 'Upload failed', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Delete(':id/files')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @ApiOperation({
+    description: 'Remove a previously stored file URL from the document',
+    operationId: 'RemoveFileFromDocument',
+  })
+  async deleteFileFromDocument(
+    @Param('id') id: number,
+    @Body('url') url: string,
+  ) {
+    if (!url) {
+      throw new HttpException('URL is required', HttpStatus.BAD_REQUEST);
+    }
+    const document = await this.documentsService.removeFileUrl(id, url);
+    return { success: true, document };
+  }
+
+  @Get(':id/files/:idx')
+  @ApiOperation({
+    description: 'Proxy download of a stored file by index',
+    operationId: 'DownloadFileFromDocument',
+  })
+  async downloadFile(
+    @Param('id') id: number,
+    @Param('idx') idx: number,
+    @Res() res,
+  ) {
+    console.log(`> downloadFile endpoint id=${id} idx=${idx}`);
+    const doc = await this.documentsService.getDocumentById(id);
+    if (!doc) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+    const list = doc.documentos || [];
+    if (idx < 0 || idx >= list.length) {
+      throw new HttpException('File index out of range', HttpStatus.BAD_REQUEST);
+    }
+    const url = list[idx];
+    // stream through service helper, which forces attachment headers
+    await this.documentsService.streamRemoteFile(url, res);
   }
 
   @Get()

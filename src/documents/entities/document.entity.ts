@@ -128,4 +128,8 @@ export class DocumentEntity {
 
   @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
   margen_operativo: number;
+
+  // URLs of files (PDFs, images) uploaded to Cloudinary
+  @Column('text', { array: true, nullable: true, name: 'documentos' })
+  documentos: string[];
 }
