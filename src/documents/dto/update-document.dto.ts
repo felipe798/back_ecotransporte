@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNumber, IsDate } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsDate, IsArray } from 'class-validator';
 
 export class UpdateDocumentDto {
   @IsOptional()
@@ -103,4 +103,9 @@ export class UpdateDocumentDto {
   @IsOptional()
   @IsNumber()
   margen_operativo?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  documentos?: string[];
 }

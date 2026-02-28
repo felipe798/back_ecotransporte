@@ -134,8 +134,8 @@ export class DashboardController {
    * Traslados (total de documentos)
    */
   @Get('traslados')
-  async getTraslados() {
-    const count = await this.dashboardService.getTotalTraslados();
+  async getTraslados(@Query() filters: DashboardFilters) {
+    const count = await this.dashboardService.getTotalTraslados(filters);
     return { count };
   }
 
@@ -201,12 +201,16 @@ export class DashboardController {
       traslados,
       tonelajeFiltrado,
       tnRecibidaFiltrado,
+      tnEnviadoPorSemana,
+      tnRecibidoPorSemana,
     ] = await Promise.all([
       this.dashboardService.getSegmentadores(),
       this.dashboardService.getControlPeso(filters),
-      this.dashboardService.getTotalTraslados(),
+      this.dashboardService.getTotalTraslados(filters),
       this.dashboardService.getTonelajeEnviadoFiltrado(filters),
       this.dashboardService.getTonelajeRecibidoFiltrado(filters),
+      this.dashboardService.getTnEnviadoPorSemana(filters),
+      this.dashboardService.getTnRecibidoPorSemana(filters),
     ]);
 
     return {
@@ -217,6 +221,8 @@ export class DashboardController {
         tnRecibidaFiltrado,
       },
       controlPeso,
+      tnEnviadoPorSemana,
+      tnRecibidoPorSemana,
     };
   }
 

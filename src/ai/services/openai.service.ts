@@ -68,6 +68,38 @@ export class OpenAIService {
     return normalized;
   }
 
+  /**
+   * Normaliza el material/producto transportado:
+   * - Quita prefijo "POR " al inicio
+   * - Quita códigos de lote (ej: "0012-21416")
+   * - Quita clasificaciones ONU (ej: "/ CLASE: 09 UN: 3077")
+   * - Quita sufijos como "- GRANEL"
+   * - Limpia espacios extra
+   */
+  private normalizeMaterial(material: string): string {
+    if (!material) return material;
+
+    let cleaned = material.trim().toUpperCase();
+
+    // Quitar prefijo "POR "
+    cleaned = cleaned.replace(/^POR\s+/i, '');
+
+    // Quitar clasificaciones ONU: "/ CLASE: 09 UN: 3077", "CLASE 9", "UN 3077", "UN: 3077"
+    cleaned = cleaned.replace(/\s*\/?\s*CLASE\s*:?\s*\d+\s*(UN\s*:?\s*\d+)?/gi, '');
+    cleaned = cleaned.replace(/\s+UN\s*:?\s*\d+/gi, '');
+
+    // Quitar códigos de lote: "0012-21416", etc.
+    cleaned = cleaned.replace(/\s+\d{4}-\d{4,}/g, '');
+
+    // Quitar sufijo "- GRANEL" o "/ GRANEL" (mantener "A GRANEL" que es parte del nombre del material)
+    cleaned = cleaned.replace(/\s*[-/]\s*GRANEL\s*$/i, '');
+
+    // Limpiar espacios múltiples y guiones/barras sueltos al final
+    cleaned = cleaned.replace(/\s*[-/]\s*$/, '').replace(/\s+/g, ' ').trim();
+
+    return cleaned;
+  }
+
   async extractDocumentData(pdfBuffer: Buffer): Promise<any> {
     try {
       const imageBase64 = await this.convertPdfToImage(pdfBuffer);
@@ -84,20 +116,20 @@ IMPORTANTE: Extrae los valores EXACTAMENTE como aparecen en el documento, sin mo
 Campos a extraer del documento:
 - fecha: Fecha de emisión (formato YYYY-MM-DD)
 - mes: Mes en español (enero, febrero, etc.)
-- semana: Número de semana ISO del año
+- semana: Número de semana ISO del año SIN ceros a la izquierda (ej: "1", "2", "10", "52", NO "01", "02")
 - grt: Código de la guía EXACTAMENTE como aparece (ej: T001-123, VVV1-644, etc. - NO añadir ceros)
 - transportista: SOLO el nombre del CONDUCTOR PRINCIPAL (persona física, ej: "GUTIERREZ TOLENTINO ENGILBERTO"). Busca etiquetas como "CONDUCTOR PRINCIPAL", "CHOFER", "CONDUCTOR". NO uses el nombre de la empresa de transporte. Extrae SOLO el nombre, sin el DNI ni número de documento.
-- unidad: SOLO la PLACA del VEHÍCULO PRINCIPAL (formato peruano: 3 caracteres alfanuméricos + 3 dígitos, ej: AWW898, C8S840, BXX714). NO confundir con el TUC (Tarjeta Única de Circulación) que es un código largo tipo 15M21034987E o 1SM25000482. El TUC NO es la placa. La placa está junto a "VEHÍCULO PRINCIPAL" y tiene exactamente 6 caracteres (puede tener guión: B4E-768 → B4E768). Quitar espacios y guiones de la placa.
+- unidad: SOLO la PLACA del VEHÍCULO PRINCIPAL (formato peruano: 3 caracteres alfanuméricos + 3 dígitos, ej: AWW898, CBS840, BXX714). NO confundir con el TUC (Tarjeta Única de Circulación) que es un código largo tipo 15M21034987E o 1SM25000482. El TUC NO es la placa. La placa está junto a "VEHÍCULO PRINCIPAL" y tiene exactamente 6 caracteres (puede tener guión: BEA-768 → BEA768). Quitar espacios y guiones de la placa. IMPORTANTE SOBRE LECTURA DE PLACAS: Lee cada carácter individualmente con máximo cuidado. Errores comunes que DEBES evitar: (1) Confundir S con 5 (ej: leer "C5B840" cuando dice "CBS840"), (2) Confundir B con 8, (3) Confundir O con 0, (4) Confundir I con 1, (5) Transponer letras adyacentes (ej: leer "CSB" cuando dice "CBS"). Las placas peruanas tienen formato: 3 caracteres (mayormente LETRAS) + 3 DÍGITOS. Si en los primeros 3 caracteres ves un "5", verifica si no es una "S". Si ves un "8", verifica si no es una "B". Lee el carácter por el contexto visual, no asumas.
 - empresa: Nombre COMERCIAL CORTO del remitente. Si el documento muestra algo como "PALTARUMI SOCIEDAD ANONIMA CERRADA - PALTARUMI S.A.C.", usa SOLO la parte corta después del guión: "PALTARUMI S.A.C.". Si no hay guión, abrevia: quita "SOCIEDAD ANONIMA CERRADA" y pon "S.A.C.", quita "SOCIEDAD ANONIMA" y pon "S.A.". Ejemplos correctos: "LOGISMINSA S.A.", "PALTARUMI S.A.C.", "TRAFIGURA PERU S.A.C.", "ECO GOLD S.A.C.", "POLIMETALICOS DEL NORTE S.A.C."
 - tn_enviado: PESO BRUTO TOTAL (TNE) en toneladas (número decimal)
-- deposito: Tipo de punto de partida (CONCESION, DEPOSITO, ALMACEN, PLANTA, MINA)
 - grr: Código de documento relacionado (empieza con EG o GR)
-- cliente: Nombre COMERCIAL CORTO del destinatario. Misma regla que empresa: usa la versión corta. Si dice "ECO GOLD SOCIEDAD ANONIMA CERRADA", extrae "ECO GOLD S.A.C.". Si dice "MONARCA GOLD S.A.C", déjalo así.
-- partida: Punto de partida (DEPARTAMENTO - PROVINCIA - DISTRITO)
-- llegada: Dirección completa del punto de llegada
-- transportado: Descripción del producto en la tabla
+- cliente: Nombre COMERCIAL CORTO del destinatario. Extráelo EXCLUSIVAMENTE del campo "DENOMINACIÓN" que aparece en la sección del destinatario del documento (junto a la etiqueta "DENOMINACIÓN:" o "DENOMINACION:"). NO uses el texto de la sección "DESTINATARIO" que aparece al final del documento. Si el campo DENOMINACIÓN dice algo como "P.A.Y. METAL TRADING SOCIEDAD ANONIMA CERRADA - P.A.Y. METAL TRADING S.A.C.", usa SOLO la parte corta después del guión: "P.A.Y. METAL TRADING S.A.C.". Si no hay guión, abrevia: quita "SOCIEDAD ANONIMA CERRADA" y pon "S.A.C.". Ejemplos: "ECO GOLD SOCIEDAD ANONIMA CERRADA" → "ECO GOLD S.A.C.", "MONARCA GOLD S.A.C" → "MONARCA GOLD S.A.C".
+- partida: Punto de partida en formato DEPARTAMENTO-PROVINCIA-DISTRITO (solo esos 3 niveles separados por guión SIN espacios alrededor del guión). Extrae SOLO el departamento, provincia y distrito. NO incluyas direcciones, carreteras, kilómetros ni detalles adicionales. Ejemplos correctos: "LA LIBERTAD-TRUJILLO-HUANCHACO", "LIMA-BARRANCA-PARAMONGA", "CALLAO-CALLAO-VENTANILLA", "ANCASH-SANTA-NEPEÑA", "PIURA-AYABACA-SUYO". Si el documento dice "LIMA - BARRANCA - PARAMONGA - CAR. PANAMERICANA NORTE KM. 221...", extrae SOLO "LIMA-BARRANCA-PARAMONGA".
+- llegada: Punto de llegada en formato DEPARTAMENTO-PROVINCIA-DISTRITO (mismo formato que partida). Extrae SOLO departamento, provincia y distrito. Si el distrito incluye un dato adicional entre paréntesis como "CALLAO (IMPALA)", manténlo: "CALLAO-CALLAO-CALLAO (IMPALA)". NO incluyas direcciones, carreteras, kilómetros, comunidades ni detalles adicionales después del distrito. Ejemplos correctos: "CALLAO-CALLAO-CALLAO (IMPALA)", "CALLAO-CALLAO-VENTANILLA", "LIMA-BARRANCA-PARAMONGA", "LA LIBERTAD-TRUJILLO-HUANCHACO".
+- transportado: Descripción del producto/material transportado. Extráelo EXCLUSIVAMENTE de la TABLA PRINCIPAL del documento que tiene columnas como "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD". Usa SOLO el texto de la columna DESCRIPCIÓN de esa tabla. NO uses el texto de las secciones inferiores del documento donde aparecen especificaciones técnicas, clases ONU, números UN, observaciones o detalles adicionales. Limpia el valor: quita prefijos como "POR " al inicio, quita códigos de lote (ej: "0012-21416"), quita clasificaciones ONU (ej: "/ CLASE: 09 UN: 3077", "CLASE 9", "UN 3077"), quita sufijos como "- GRANEL". Ejemplos de extracción correcta: "POR CONCENTRADO DE ZINC - GRANEL / CLASE: 09 UN: 3077" → "CONCENTRADO DE ZINC", "POR LOTE MINERAL 0012-21416" → "LOTE MINERAL", "POR CONCENTRADO DE PLATA Y ORO" → "CONCENTRADO DE PLATA Y ORO", "CONCENTRADO DE AU" → "CONCENTRADO DE AU"
 
-Campos que SIEMPRE deben ser null (se ingresan manualmente del ticket físico):
+Campos que SIEMPRE deben ser null (se calculan o ingresan manualmente):
+- deposito: null (se calcula automáticamente según el punto de llegada)
 - tn_recibida: null (viene del ticket)
 - tn_recibida_data_cruda: null (viene del ticket)
 - ticket: null (viene del ticket)
@@ -117,7 +149,7 @@ Si es válido, incluye "es_documento_valido": true al inicio del JSON:
   "unidad": "...",
   "empresa": "...",
   "tn_enviado": null,
-  "deposito": "...",
+  "deposito": null,
   "tn_recibida": null,
   "tn_recibida_data_cruda": null,
   "ticket": null,
@@ -190,6 +222,19 @@ Si es válido, incluye "es_documento_valido": true al inicio del JSON:
       }
       if (extractedData.cliente) {
         extractedData.cliente = this.normalizeCompanyName(extractedData.cliente);
+      }
+
+      // Normalizar material/transportado: limpiar prefijos, códigos de lote, clases ONU
+      if (extractedData.transportado) {
+        extractedData.transportado = this.normalizeMaterial(extractedData.transportado);
+      }
+
+      // Normalizar semana: quitar ceros a la izquierda ("01" → "1")
+      if (extractedData.semana) {
+        const weekNum = parseInt(String(extractedData.semana), 10);
+        if (!isNaN(weekNum)) {
+          extractedData.semana = String(weekNum);
+        }
       }
 
       return {

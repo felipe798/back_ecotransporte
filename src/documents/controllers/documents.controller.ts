@@ -13,6 +13,8 @@ import {
   Request,
   HttpException,
   HttpStatus,
+  Res,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -76,6 +78,7 @@ export class DocumentsController {
         message: 'Document processed successfully',
         document: result.document,
         placaNoRegistrada: result.placaNoRegistrada,
+        tarifaNoEncontrada: result.tarifaNoEncontrada,
       };
     } catch (error) {
       console.error('=== UPLOAD ERROR ===');
@@ -89,6 +92,71 @@ export class DocumentsController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Post(':id/files')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    description: 'Upload an image or PDF to Cloudinary and attach its URL to the document',
+    operationId: 'UploadFileToDocument',
+  })
+  async uploadFileToDocument(
+    @Param('id') id: number,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
+    }
+    try {
+      const url = await this.documentsService.uploadToCloudinary(file.buffer, file.originalname);
+      const document = await this.documentsService.addFileUrl(id, url);
+      return { success: true, url, document };
+    } catch (err) {
+      throw new HttpException(err.message || 'Upload failed', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Delete(':id/files')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @ApiOperation({
+    description: 'Remove a previously stored file URL from the document',
+    operationId: 'RemoveFileFromDocument',
+  })
+  async deleteFileFromDocument(
+    @Param('id') id: number,
+    @Body('url') url: string,
+  ) {
+    if (!url) {
+      throw new HttpException('URL is required', HttpStatus.BAD_REQUEST);
+    }
+    const document = await this.documentsService.removeFileUrl(id, url);
+    return { success: true, document };
+  }
+
+  @Get(':id/files/:idx')
+  @ApiOperation({
+    description: 'Proxy download of a stored file by index',
+    operationId: 'DownloadFileFromDocument',
+  })
+  async downloadFile(
+    @Param('id') id: number,
+    @Param('idx') idx: number,
+    @Res() res,
+  ) {
+    const doc = await this.documentsService.getDocumentById(id);
+    if (!doc) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+    const list = doc.documentos || [];
+    if (idx < 0 || idx >= list.length) {
+      throw new HttpException('File index out of range', HttpStatus.BAD_REQUEST);
+    }
+    const url = list[idx];
+    await this.documentsService.streamRemoteFile(url, res);
   }
 
   @Get()
@@ -225,6 +293,27 @@ export class DocumentsController {
     return {
       success: true,
       message: 'Document deleted successfully',
+    };
+  }
+
+  @Patch(':id/recalculate')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @ApiOperation({
+    description: 'Recalculate financial fields for a document after a new tariff is created',
+    operationId: 'RecalculateDocument',
+  })
+  async recalculateDocument(@Param('id') id: number) {
+    const document = await this.documentsService.recalculateDocumentFinancials(id);
+
+    if (!document) {
+      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      success: true,
+      message: 'Financial fields recalculated',
+      data: document,
     };
   }
 }

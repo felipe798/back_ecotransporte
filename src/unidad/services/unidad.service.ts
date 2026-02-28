@@ -58,7 +58,19 @@ export class UnidadService {
       }
     }
 
-    // 3. Fuzzy matching: buscar la placa más similar usando Levenshtein
+    // 3. Buscar por variantes OCR + transposiciones adyacentes
+    // Ej: "CSB886" genera "CBS886" (transposición), "C5B840" genera "CSB840" → "CBS840"
+    console.log('Buscando por variantes OCR + transposición...');
+    const variants = this.generarVariantesPlaca(placaNormalizada);
+    for (const unidad of unidades) {
+      const unidadPlacaNorm = unidad.placa.replace(/[\s-]/g, '').toUpperCase();
+      if (variants.has(unidadPlacaNorm)) {
+        console.log(`✓ Coincidencia por OCR/transposición: "${placaNormalizada}" → "${unidad.placa}"`);
+        return unidad;
+      }
+    }
+
+    // 4. Fuzzy matching: buscar la placa más similar usando Damerau-Levenshtein
     console.log('Buscando por SIMILITUD (fuzzy matching)...');
     let mejorCoincidencia: UnidadEntity | null = null;
     let mejorSimilitud = 0;
@@ -131,6 +143,16 @@ export class UnidadService {
           matrix[i][j - 1] + 1,          // inserción
           matrix[i - 1][j - 1] + cost    // sustitución
         );
+
+        // Transposición de caracteres adyacentes (Damerau-Levenshtein)
+        if (i > 1 && j > 1 &&
+            str1[i - 1] === str2[j - 2] && str1[i - 2] === str2[j - 1]) {
+          const transpCost = this.sonCaracteresSimilares(str1[i - 2], str1[i - 1]) ? 0.5 : 1;
+          matrix[i][j] = Math.min(
+            matrix[i][j],
+            matrix[i - 2][j - 2] + transpCost  // transposición
+          );
+        }
       }
     }
 
@@ -175,6 +197,47 @@ export class UnidadService {
       }
     }
     return false;
+  }
+
+  /**
+   * Genera variantes de una placa combinando correcciones OCR y transposiciones adyacentes.
+   * Cubre errores como: 5→S, 0→O, 8→B y letras intercambiadas (CSB→CBS).
+   */
+  private generarVariantesPlaca(placa: string): Set<string> {
+    const variants = new Set<string>();
+    const ocrMap: Record<string, string[]> = {
+      '0': ['O'], 'O': ['0', 'Q', 'D'],
+      '8': ['B'], 'B': ['8'],
+      '1': ['I', 'L'], 'I': ['1', 'L'], 'L': ['1', 'I'],
+      '5': ['S'], 'S': ['5'],
+      '6': ['G'], 'G': ['6'],
+      '2': ['Z'], 'Z': ['2'],
+      'C': ['G'], 'V': ['Y', 'U'], 'Y': ['V'], 'U': ['V'],
+    };
+
+    // Generar variantes con una sola sustitución OCR
+    const ocrVariants = [placa];
+    for (let i = 0; i < placa.length; i++) {
+      const char = placa[i];
+      if (ocrMap[char]) {
+        for (const replacement of ocrMap[char]) {
+          ocrVariants.push(placa.substring(0, i) + replacement + placa.substring(i + 1));
+        }
+      }
+    }
+
+    // Para cada variante OCR, agregar todas las transposiciones adyacentes
+    for (const variant of ocrVariants) {
+      variants.add(variant);
+      for (let i = 0; i < variant.length - 1; i++) {
+        const chars = variant.split('');
+        [chars[i], chars[i + 1]] = [chars[i + 1], chars[i]];
+        variants.add(chars.join(''));
+      }
+    }
+
+    variants.delete(placa);
+    return variants;
   }
 
   async findByEmpresa(empresaId: number): Promise<UnidadEntity[]> {
