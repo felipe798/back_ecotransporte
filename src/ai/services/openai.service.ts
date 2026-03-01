@@ -7,19 +7,55 @@ export class OpenAIService {
   private openai: OpenAI;
 
   constructor() {
+    const apiKey = process.env.OPENAI_API_KEY;
+    console.log('=== OPENAI SERVICE INIT ===');
+    console.log('OPENAI_API_KEY presente:', !!apiKey);
+    console.log('OPENAI_API_KEY longitud:', apiKey ? apiKey.length : 0);
+    console.log('OPENAI_API_KEY prefijo:', apiKey ? apiKey.substring(0, 7) + '...' : 'NO CONFIGURADA');
+    if (!apiKey) {
+      console.error('ERROR CRITICO: OPENAI_API_KEY no está configurada en las variables de entorno');
+    }
     this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey,
     });
+    console.log('=== FIN OPENAI SERVICE INIT ===');
   }
 
   async extractTextFromPdf(pdfBuffer: Buffer): Promise<string> {
-    const pdfParseLib = (pdfParse as any).default ?? pdfParse;
-    const data = await pdfParseLib(pdfBuffer);
+    console.log('=== EXTRAYENDO TEXTO DEL PDF ===');
+    console.log('Buffer recibido:', !!pdfBuffer);
+    console.log('Tamaño del buffer:', pdfBuffer ? pdfBuffer.length : 0, 'bytes');
+
+    let pdfParseLib: any;
+    try {
+      pdfParseLib = (pdfParse as any).default ?? pdfParse;
+      console.log('pdf-parse cargado correctamente, tipo:', typeof pdfParseLib);
+    } catch (importErr) {
+      console.error('ERROR al cargar pdf-parse:', importErr?.message);
+      throw importErr;
+    }
+
+    let data: any;
+    try {
+      data = await pdfParseLib(pdfBuffer);
+      console.log('pdf-parse ejecutado correctamente');
+      console.log('Páginas detectadas:', data?.numpages);
+      console.log('Texto extraído (longitud):', data?.text ? data.text.trim().length : 0, 'caracteres');
+      if (data?.text) {
+        console.log('Primeros 200 chars del texto:', data.text.trim().substring(0, 200));
+      }
+    } catch (parseErr) {
+      console.error('ERROR en pdf-parse al procesar el buffer:', parseErr?.message);
+      console.error('Stack pdf-parse:', parseErr?.stack);
+      throw parseErr;
+    }
 
     if (!data.text || data.text.trim().length < 50) {
+      console.error('TEXTO INSUFICIENTE: longitud=', data?.text?.trim().length ?? 0, '(mínimo 50)');
       throw new Error('PDF sin texto extraíble (posiblemente escaneado o vacío)');
     }
 
+    console.log('=== TEXTO EXTRAÍDO OK ===');
     return data.text;
   }
 
@@ -93,7 +129,17 @@ export class OpenAIService {
 
   async extractDocumentData(pdfBuffer: Buffer): Promise<any> {
     try {
-      const pdfText = await this.extractTextFromPdf(pdfBuffer);
+      console.log('=== EXTRACT DOCUMENT DATA - INICIO ===');
+      console.log('Buffer recibido:', !!pdfBuffer, '- tamaño:', pdfBuffer?.length, 'bytes');
+
+      let pdfText: string;
+      try {
+        pdfText = await this.extractTextFromPdf(pdfBuffer);
+        console.log('Texto PDF extraído OK, longitud total:', pdfText.length);
+      } catch (pdfErr) {
+        console.error('FALLO EN extractTextFromPdf:', pdfErr?.message);
+        throw pdfErr;
+      }
 
       const prompt = `Analiza el siguiente texto extraído de un documento y determina si es una Guía de Remisión Transportista Electrónica u otro documento comercial de transporte de Perú.
 
@@ -193,7 +239,12 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
   "margen_operativo": null
 }`;
 
-      const response = await this.openai.chat.completions.create({
+      console.log('=== LLAMANDO A OPENAI API ===');
+      console.log('Modelo: gpt-4o');
+      console.log('Tokens del prompt (aproximado):', Math.ceil((prompt.length + pdfText.length) / 4));
+      let response: any;
+      try {
+        response = await this.openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           {
@@ -205,18 +256,47 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
             content: `${prompt}\n\n---CONTENIDO DEL DOCUMENTO---\n${pdfText}`,
           },
         ],
-        max_tokens: 2048,
-        temperature: 0,
-      });
+          max_tokens: 2048,
+          temperature: 0,
+        });
+        console.log('OpenAI respondió OK');
+        console.log('Tokens usados:', response?.usage?.total_tokens);
+        console.log('Finish reason:', response?.choices?.[0]?.finish_reason);
+      } catch (openaiErr: any) {
+        console.error('=== ERROR EN LLAMADA A OPENAI ===');
+        console.error('Tipo:', openaiErr?.constructor?.name);
+        console.error('Mensaje:', openaiErr?.message);
+        console.error('HTTP Status:', openaiErr?.status);
+        console.error('Código:', openaiErr?.code);
+        console.error('Tipo de error OpenAI:', openaiErr?.type);
+        console.error('Param:', openaiErr?.param);
+        if (openaiErr?.headers) {
+          console.error('Response headers:', JSON.stringify(openaiErr.headers));
+        }
+        console.error('Stack:', openaiErr?.stack);
+        console.error('=================================');
+        throw openaiErr;
+      }
 
       const content = response.choices[0].message.content;
+      console.log('Respuesta cruda de OpenAI (primeros 300 chars):', content?.substring(0, 300));
+
       const jsonMatch = content.match(/\{[\s\S]*\}/);
-      
+
       if (!jsonMatch) {
+        console.error('NO SE ENCONTRÓ JSON en la respuesta. Respuesta completa:', content);
         throw new Error('No se pudo extraer JSON válido de la respuesta de OpenAI');
       }
 
-      const extractedData = JSON.parse(jsonMatch[0]);
+      let extractedData: any;
+      try {
+        extractedData = JSON.parse(jsonMatch[0]);
+        console.log('JSON parseado correctamente, campos:', Object.keys(extractedData).join(', '));
+      } catch (jsonErr) {
+        console.error('ERROR al parsear JSON de OpenAI:', jsonErr?.message);
+        console.error('JSON recibido:', jsonMatch[0]?.substring(0, 500));
+        throw jsonErr;
+      }
 
       // Validar si el documento es relevante
       if (extractedData.es_documento_valido === false) {
@@ -248,12 +328,22 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
         }
       }
 
+      console.log('=== EXTRACT DOCUMENT DATA - ÉXITO ===');
       return {
         success: true,
         data: extractedData,
         rawResponse: content,
       };
     } catch (error) {
+      console.error('=== OPENAI SERVICE ERROR FINAL ===');
+      console.error('Tipo:', error?.constructor?.name);
+      console.error('Mensaje:', error?.message);
+      console.error('HTTP Status:', error?.status ?? 'N/A');
+      console.error('Código:', error?.code ?? 'N/A');
+      console.error('Tipo OpenAI:', error?.type ?? 'N/A');
+      console.error('¿Es HttpException?:', error instanceof HttpException);
+      console.error('Stack completo:', error?.stack);
+      console.error('==================================');
       throw new HttpException(
         {
           message: 'Error processing document with OpenAI',
