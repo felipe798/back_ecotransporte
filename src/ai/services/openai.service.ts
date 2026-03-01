@@ -39,13 +39,14 @@ export class OpenAIService {
         parseFn = mod.default;
         console.log('pdf-parse: usando mod.default (función)');
       } else if (mod?.PDFParse) {
-        // Caso Docker/Render: expone la clase PDFParse internamente
-        // Se instancia y se llama al método .pdf() como hace la librería internamente
+        // pdf-parse v2.x (CJS bundle): expone la clase PDFParse
+        // El constructor REQUIERE un objeto de opciones (aunque esté vacío),
+        // si se llama sin argumentos falla con "Cannot read properties of undefined (reading 'verbosity')"
         const PDFParseClass = mod.PDFParse;
-        console.log('pdf-parse: usando clase PDFParse directamente (entorno Docker)');
+        console.log('pdf-parse: usando clase PDFParse v2.x directamente (entorno Docker)');
         parseFn = async (buffer: Buffer, options?: any) => {
-          const parser = new PDFParseClass();
-          return parser.pdf(buffer, options);
+          const parser = new PDFParseClass({ verbosity: 0, ...(options || {}) });
+          return parser.pdf(buffer, {});
         };
       } else {
         console.error('pdf-parse: estructura desconocida. Keys:', Object.keys(mod || {}));
