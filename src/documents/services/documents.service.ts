@@ -54,6 +54,16 @@ export class DocumentsService {
         ...aiResponse.data,
       };
 
+      // Normalizar fecha: convertir de DD/MM/YYYY a YYYY-MM-DD si es necesario
+      // OpenAI a veces devuelve el formato peruano (DD/MM/YYYY) en vez de ISO (YYYY-MM-DD)
+      if (documentData.fecha && typeof documentData.fecha === 'string') {
+        const ddmmyyyy = (documentData.fecha as string).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (ddmmyyyy) {
+          documentData.fecha = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}` as any;
+          console.log(`📅 Fecha convertida: "${ddmmyyyy[0]}" → "${documentData.fecha}"`);
+        }
+      }
+
       // Por ahora TN Recibida = TN Enviado al subir la guía
       if (documentData.tn_enviado && !documentData.tn_recibida) {
         documentData.tn_recibida = documentData.tn_enviado;
@@ -106,9 +116,37 @@ export class DocumentsService {
       console.log('Margen:', documentData.margen_operativo);
       console.log('=====================================');
 
-      // Guardar en BD
-      const doc = this.documentsRepository.create(documentData);
-      let savedDocument = await this.documentsRepository.save(doc);
+      // Guardar en BD — siempre intentar guardar aunque falten campos
+      // Los campos no encontrados quedan en null (permitido por la entidad)
+      let savedDocument: DocumentEntity | null = null;
+      try {
+        const doc = this.documentsRepository.create(documentData);
+        savedDocument = await this.documentsRepository.save(doc) as DocumentEntity;
+      } catch (saveErr: any) {
+        console.error('=== ERROR AL GUARDAR EN BD ===');
+        console.error('Mensaje:', saveErr?.message);
+        // Último intento: guardar solo los campos mínimos seguros
+        console.warn('Intentando guardar con campos mínimos...');
+        const minimalDoc = this.documentsRepository.create({
+          uploaded_by: documentData.uploaded_by,
+          pdf_file_path: documentData.pdf_file_path,
+          pdf_original_name: documentData.pdf_original_name,
+          grt: documentData.grt || null,
+          transportista: documentData.transportista || null,
+          unidad: documentData.unidad || null,
+          cliente: documentData.cliente || null,
+          partida: documentData.partida || null,
+          llegada: documentData.llegada || null,
+          transportado: documentData.transportado || null,
+          tn_enviado: documentData.tn_enviado || null,
+          tn_recibida: documentData.tn_recibida || null,
+          mes: documentData.mes || null,
+          semana: documentData.semana || null,
+          grr: documentData.grr || null,
+        });
+        savedDocument = await this.documentsRepository.save(minimalDoc) as DocumentEntity;
+        console.warn('✓ Documento guardado con campos mínimos, id=', savedDocument.id);
+      }
 
       // Subir el PDF original a Cloudinary y guardar URL
       try {

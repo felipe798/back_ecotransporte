@@ -451,6 +451,16 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
       // Remover el campo de validación antes de pasar los datos
       delete extractedData.es_documento_valido;
 
+      // Normalizar fecha: convertir DD/MM/YYYY → YYYY-MM-DD si OpenAI devuelve formato peruano
+      if (extractedData.fecha && typeof extractedData.fecha === 'string') {
+        const ddmmyyyy = extractedData.fecha.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (ddmmyyyy) {
+          const converted = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+          console.log(`📅 Fecha normalizada: "${extractedData.fecha}" → "${converted}"`);
+          extractedData.fecha = converted;
+        }
+      }
+
       // Normalizar nombre de cliente (empresa ya no se extrae del PDF)
       if (extractedData.cliente) {
         extractedData.cliente = this.normalizeCompanyName(extractedData.cliente);
