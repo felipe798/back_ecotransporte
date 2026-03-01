@@ -25,43 +25,38 @@ export class OpenAIService {
     console.log('Buffer recibido:', !!pdfBuffer);
     console.log('Tamaño del buffer:', pdfBuffer ? pdfBuffer.length : 0, 'bytes');
 
-    let parseFn: (buffer: Buffer, options?: any) => Promise<any>;
+    // pdf-parse v2.x API (según documentación oficial):
+    //   const { PDFParse } = require('pdf-parse');
+    //   const parser = new PDFParse({ data: buffer });
+    //   const result = await parser.getText();
+    //   await parser.destroy();
+    //   result.text contiene el texto extraído
+    let data: { text: string; numpages?: number };
     try {
       const mod = require('pdf-parse');
       console.log('pdf-parse módulo cargado, tipo:', typeof mod);
 
-      if (typeof mod === 'function') {
-        // Caso normal: el módulo exporta directamente la función
-        parseFn = mod;
-        console.log('pdf-parse: usando export directo (función)');
-      } else if (typeof mod?.default === 'function') {
-        // Caso ESM compilado: está en .default
-        parseFn = mod.default;
-        console.log('pdf-parse: usando mod.default (función)');
-      } else if (mod?.PDFParse) {
-        // pdf-parse v2.x (CJS bundle): expone la clase PDFParse
-        // El constructor REQUIERE un objeto de opciones (aunque esté vacío),
-        // si se llama sin argumentos falla con "Cannot read properties of undefined (reading 'verbosity')"
+      if (mod?.PDFParse) {
+        // v2.x — API correcta con clase PDFParse
+        console.log('pdf-parse: v2.x detectado, usando new PDFParse({ data: buffer }).getText()');
         const PDFParseClass = mod.PDFParse;
-        console.log('pdf-parse: usando clase PDFParse v2.x directamente (entorno Docker)');
-        parseFn = async (buffer: Buffer, options?: any) => {
-          const parser = new PDFParseClass({ verbosity: 0, ...(options || {}) });
-          return parser.pdf(buffer, {});
-        };
+        const parser = new PDFParseClass({ data: pdfBuffer });
+        const result = await parser.getText();
+        await parser.destroy();
+        data = { text: result.text ?? '', numpages: result.total ?? null };
+      } else if (typeof mod === 'function') {
+        // v1.x — la función es el export directamente
+        console.log('pdf-parse: v1.x detectado, llamando como función');
+        data = await mod(pdfBuffer);
+      } else if (typeof mod?.default === 'function') {
+        // v1.x en .default
+        console.log('pdf-parse: v1.x detectado en .default');
+        data = await mod.default(pdfBuffer);
       } else {
         console.error('pdf-parse: estructura desconocida. Keys:', Object.keys(mod || {}));
         throw new Error(`Estructura de pdf-parse no reconocida. Keys: ${Object.keys(mod || {}).join(', ')}`);
       }
-    } catch (importErr) {
-      console.error('ERROR al cargar/preparar pdf-parse:', importErr?.message);
-      throw importErr;
-    }
-    // Alias para mantener el resto del código igual
-    const pdfParseLib = parseFn;
 
-    let data: any;
-    try {
-      data = await pdfParseLib(pdfBuffer);
       console.log('pdf-parse ejecutado correctamente');
       console.log('Páginas detectadas:', data?.numpages);
       console.log('Texto extraído (longitud):', data?.text ? data.text.trim().length : 0, 'caracteres');
