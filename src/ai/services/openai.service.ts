@@ -1,6 +1,6 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import OpenAI from 'openai';
-import { pdfToPng } from 'pdf-to-png-converter';
+import * as pdfParse from 'pdf-parse';
 
 @Injectable()
 export class OpenAIService {
@@ -12,24 +12,15 @@ export class OpenAIService {
     });
   }
 
-  async convertPdfToImage(pdfBuffer: Buffer): Promise<string> {
-    const arrayBuffer = pdfBuffer.buffer.slice(
-      pdfBuffer.byteOffset,
-      pdfBuffer.byteOffset + pdfBuffer.byteLength
-    );
-    
-    const pages = await pdfToPng(arrayBuffer as ArrayBuffer, {
-      disableFontFace: false,
-      useSystemFonts: true,
-      viewportScale: 4.0,
-      pagesToProcess: [1],
-    });
-    
-    if (!pages || pages.length === 0) {
-      throw new Error('No se pudo convertir el PDF a imagen');
+  async extractTextFromPdf(pdfBuffer: Buffer): Promise<string> {
+    const pdfParseLib = (pdfParse as any).default ?? pdfParse;
+    const data = await pdfParseLib(pdfBuffer);
+
+    if (!data.text || data.text.trim().length < 50) {
+      throw new Error('PDF sin texto extraíble (posiblemente escaneado o vacío)');
     }
 
-    return pages[0].content.toString('base64');
+    return data.text;
   }
 
   /**
@@ -102,53 +93,88 @@ export class OpenAIService {
 
   async extractDocumentData(pdfBuffer: Buffer): Promise<any> {
     try {
-      const imageBase64 = await this.convertPdfToImage(pdfBuffer);
+      const pdfText = await this.extractTextFromPdf(pdfBuffer);
 
-      const prompt = `Analiza esta imagen y determina si es un documento comercial de transporte de Perú (Guía de Remisión, Guía de Remisión Transportista Electrónica, documento de carga, ticket de balanza, o similar relacionado a logística/transporte).
+      const prompt = `Analiza el siguiente texto extraído de un documento y determina si es una Guía de Remisión Transportista Electrónica u otro documento comercial de transporte de Perú.
 
-PRIMERO: Evalúa si el documento está relacionado con transporte, logística o carga. Si NO es un documento de transporte (por ejemplo: facturas no relacionadas, recetas, documentos personales, imágenes aleatorias, etc.), responde SOLO con:
-{"es_documento_valido": false, "motivo_rechazo": "Descripción breve de por qué no es un documento de transporte válido"}
+PRIMERO: Si el texto NO corresponde a un documento de transporte (recetas, facturas no relacionadas, documentos personales, etc.), responde SOLO con:
+{"es_documento_valido": false, "motivo_rechazo": "Descripción breve"}
 
-Si SÍ es un documento de transporte válido, extrae los datos solicitados en formato JSON.
+Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiquetas descritas en el texto. Copia los valores tal como aparecen, sin modificar, sin añadir ni quitar caracteres.
 
-IMPORTANTE: Extrae los valores EXACTAMENTE como aparecen en el documento, sin modificar, sin añadir ceros, sin cambiar el formato.
+=== CAMPOS A EXTRAER ===
 
-Campos a extraer del documento:
-- fecha: Fecha de emisión (formato YYYY-MM-DD)
-- mes: Mes en español (enero, febrero, etc.)
-- semana: Número de semana ISO del año SIN ceros a la izquierda (ej: "1", "2", "10", "52", NO "01", "02")
-- grt: Código de la guía EXACTAMENTE como aparece (ej: T001-123, VVV1-644, etc. - NO añadir ceros)
-- transportista: SOLO el nombre del CONDUCTOR PRINCIPAL (persona física, ej: "GUTIERREZ TOLENTINO ENGILBERTO"). Busca etiquetas como "CONDUCTOR PRINCIPAL", "CHOFER", "CONDUCTOR". NO uses el nombre de la empresa de transporte. Extrae SOLO el nombre, sin el DNI ni número de documento.
-- unidad: SOLO la PLACA del VEHÍCULO PRINCIPAL (formato peruano: 3 caracteres alfanuméricos + 3 dígitos, ej: AWW898, CBS840, BXX714). NO confundir con el TUC (Tarjeta Única de Circulación) que es un código largo tipo 15M21034987E o 1SM25000482. El TUC NO es la placa. La placa está junto a "VEHÍCULO PRINCIPAL" y tiene exactamente 6 caracteres (puede tener guión: BEA-768 → BEA768). Quitar espacios y guiones de la placa. IMPORTANTE SOBRE LECTURA DE PLACAS: Lee cada carácter individualmente con máximo cuidado. Errores comunes que DEBES evitar: (1) Confundir S con 5 (ej: leer "C5B840" cuando dice "CBS840"), (2) Confundir B con 8, (3) Confundir O con 0, (4) Confundir I con 1, (5) Transponer letras adyacentes (ej: leer "CSB" cuando dice "CBS"). Las placas peruanas tienen formato: 3 caracteres (mayormente LETRAS) + 3 DÍGITOS. Si en los primeros 3 caracteres ves un "5", verifica si no es una "S". Si ves un "8", verifica si no es una "B". Lee el carácter por el contexto visual, no asumas.
-- empresa: Nombre COMERCIAL CORTO del remitente. Si el documento muestra algo como "PALTARUMI SOCIEDAD ANONIMA CERRADA - PALTARUMI S.A.C.", usa SOLO la parte corta después del guión: "PALTARUMI S.A.C.". Si no hay guión, abrevia: quita "SOCIEDAD ANONIMA CERRADA" y pon "S.A.C.", quita "SOCIEDAD ANONIMA" y pon "S.A.". Ejemplos correctos: "LOGISMINSA S.A.", "PALTARUMI S.A.C.", "TRAFIGURA PERU S.A.C.", "ECO GOLD S.A.C.", "POLIMETALICOS DEL NORTE S.A.C."
-- tn_enviado: PESO BRUTO TOTAL (TNE) en toneladas (número decimal)
-- grr: Código de documento relacionado (empieza con EG o GR)
-- cliente: Nombre COMERCIAL CORTO del destinatario. Extráelo EXCLUSIVAMENTE del campo "DENOMINACIÓN" que aparece en la sección del destinatario del documento (junto a la etiqueta "DENOMINACIÓN:" o "DENOMINACION:"). NO uses el texto de la sección "DESTINATARIO" que aparece al final del documento. Si el campo DENOMINACIÓN dice algo como "P.A.Y. METAL TRADING SOCIEDAD ANONIMA CERRADA - P.A.Y. METAL TRADING S.A.C.", usa SOLO la parte corta después del guión: "P.A.Y. METAL TRADING S.A.C.". Si no hay guión, abrevia: quita "SOCIEDAD ANONIMA CERRADA" y pon "S.A.C.". Ejemplos: "ECO GOLD SOCIEDAD ANONIMA CERRADA" → "ECO GOLD S.A.C.", "MONARCA GOLD S.A.C" → "MONARCA GOLD S.A.C".
-- partida: Punto de partida en formato DEPARTAMENTO-PROVINCIA-DISTRITO (solo esos 3 niveles separados por guión SIN espacios alrededor del guión). Extrae SOLO el departamento, provincia y distrito. NO incluyas direcciones, carreteras, kilómetros ni detalles adicionales. Ejemplos correctos: "LA LIBERTAD-TRUJILLO-HUANCHACO", "LIMA-BARRANCA-PARAMONGA", "CALLAO-CALLAO-VENTANILLA", "ANCASH-SANTA-NEPEÑA", "PIURA-AYABACA-SUYO". Si el documento dice "LIMA - BARRANCA - PARAMONGA - CAR. PANAMERICANA NORTE KM. 221...", extrae SOLO "LIMA-BARRANCA-PARAMONGA".
-- llegada: Punto de llegada en formato DEPARTAMENTO-PROVINCIA-DISTRITO (mismo formato que partida). Extrae SOLO departamento, provincia y distrito. Si el distrito incluye un dato adicional entre paréntesis como "CALLAO (IMPALA)", manténlo: "CALLAO-CALLAO-CALLAO (IMPALA)". NO incluyas direcciones, carreteras, kilómetros, comunidades ni detalles adicionales después del distrito. Ejemplos correctos: "CALLAO-CALLAO-CALLAO (IMPALA)", "CALLAO-CALLAO-VENTANILLA", "LIMA-BARRANCA-PARAMONGA", "LA LIBERTAD-TRUJILLO-HUANCHACO".
-- transportado: Descripción del producto/material transportado. Extráelo EXCLUSIVAMENTE de la TABLA PRINCIPAL del documento que tiene columnas como "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD". Usa SOLO el texto de la columna DESCRIPCIÓN de esa tabla. NO uses el texto de las secciones inferiores del documento donde aparecen especificaciones técnicas, clases ONU, números UN, observaciones o detalles adicionales. Limpia el valor: quita prefijos como "POR " al inicio, quita códigos de lote (ej: "0012-21416"), quita clasificaciones ONU (ej: "/ CLASE: 09 UN: 3077", "CLASE 9", "UN 3077"), quita sufijos como "- GRANEL". Ejemplos de extracción correcta: "POR CONCENTRADO DE ZINC - GRANEL / CLASE: 09 UN: 3077" → "CONCENTRADO DE ZINC", "POR LOTE MINERAL 0012-21416" → "LOTE MINERAL", "POR CONCENTRADO DE PLATA Y ORO" → "CONCENTRADO DE PLATA Y ORO", "CONCENTRADO DE AU" → "CONCENTRADO DE AU"
+- fecha: Fecha de emisión del documento en formato YYYY-MM-DD.
 
-Campos que SIEMPRE deben ser null (se calculan o ingresan manualmente):
+- mes: Mes de la fecha de emisión en español minúsculas (enero, febrero, marzo, etc.).
+
+- semana: Número de semana ISO del año correspondiente a la fecha. SIN ceros a la izquierda ("1", "9", "10", nunca "01", "09").
+
+- grt: Busca la línea que contiene "GUÍA DE REMISIÓN TRANSPORTISTA ELECTRÓNICA" y copia ÚNICAMENTE el código que aparece entre comillas en esa línea.
+  Ejemplo de línea: GUÍA DE REMISIÓN TRANSPORTISTA ELECTRÓNICA "VVV1-000558" → extraes: "VVV1-000558"
+  Cópialo tal cual, sin añadir ni cambiar ningún carácter.
+
+- transportista: Busca la línea que contiene "CONDUCTOR PRINCIPAL:". Esa línea tiene el formato:
+  CONDUCTOR PRINCIPAL:DNI XXXXXXXX - NOMBRE APELLIDO(S)
+  Extrae ÚNICAMENTE el nombre y apellido(s) que aparecen después del guión. No incluyas el DNI ni el número.
+  Ejemplo: "CONDUCTOR PRINCIPAL:DNI 40386126 - JULIO CESAR ESPINOZA LAVADO" → extraes: "JULIO CESAR ESPINOZA LAVADO"
+
+- unidad: Busca la línea que contiene "VEHÍCULO PRINCIPAL:" o "VEHICULO PRINCIPAL:". Extrae ÚNICAMENTE la placa que aparece después de los dos puntos.
+  La placa tiene formato peruano: 3 caracteres alfanuméricos + 3 dígitos (ej: CBS840, BXX714, AWW898).
+  Si tiene guión (ej: BEA-768), quítalo y devuelve BEA768. Solo la placa, nada más.
+  NO confundir con el TUC que es un código largo (ej: 15M21034987E).
+
+- tn_enviado: Busca la línea que contiene "PESO BRUTO TOTAL (TNE):". Extrae ÚNICAMENTE el número decimal que aparece después de los dos puntos.
+  Ejemplo: "PESO BRUTO TOTAL (TNE):34.0" → extraes: 34.0
+  Cópialo exactamente, sin añadir ni quitar decimales.
+
+- grr: Busca la línea que contiene "GUÍA DE REMISIÓN REMITENTE" y extrae ÚNICAMENTE el código alfanumérico al final (empieza con EG o GR).
+  Ejemplo: "GUÍA DE REMISIÓN REMITENTE EG07-5784" → extraes: "EG07-5784"
+  Cópialo tal cual.
+
+- cliente: Busca el campo "DENOMINACIÓN:" que aparece en la sección del DESTINATARIO (no del remitente). Extrae el nombre que aparece después.
+  Si el nombre tiene formato "NOMBRE LARGO - NOMBRE CORTO S.A.C.", usa SOLO la parte después del último guión.
+  Si no tiene guión, abrevia: reemplaza "SOCIEDAD ANONIMA CERRADA" por "S.A.C.", "SOCIEDAD ANONIMA" por "S.A.".
+  Ejemplo: "DENOMINACIÓN:MONARCA GOLD S.A.C." → extraes: "MONARCA GOLD S.A.C."
+
+- partida: Busca la línea que contiene "PUNTO DE PARTIDA:". Esa línea tiene el formato:
+  PUNTO DE PARTIDA:(CÓDIGO) DEPARTAMENTO - PROVINCIA - DISTRITO - dirección extra...
+  Extrae ÚNICAMENTE los tres primeros niveles geográficos separados por guión SIN espacios: DEPARTAMENTO-PROVINCIA-DISTRITO.
+  Ignora el código ubigeo entre paréntesis y todo texto adicional después del tercer nivel.
+  Ejemplo: "PUNTO DE PARTIDA:(130104) LA LIBERTAD - TRUJILLO - HUANCHACO - CAR. PANAMERICANA KM. 584" → extraes: "LA LIBERTAD-TRUJILLO-HUANCHACO"
+
+- llegada: Igual que partida pero busca "PUNTO DE LLEGADA:". Mismas reglas de extracción.
+  Excepción: si el nombre del distrito incluye una aclaración entre paréntesis reconocida (ej: "CALLAO (IMPALA)"), mantenla.
+  Ejemplo: "PUNTO DE LLEGADA:(070101) CALLAO - CALLAO - CALLAO (IMPALA) - AV. NÉSTOR GAMBETA..." → extraes: "CALLAO-CALLAO-CALLAO (IMPALA)"
+  Ejemplo: "PUNTO DE LLEGADA:(021806) ANCASH - SANTA - NEPEÑA - OTR. QUEBRADA SANTA LUCIA..." → extraes: "ANCASH-SANTA-NEPEÑA"
+
+- transportado: Busca en la tabla del documento que tiene columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD".
+  Extrae ÚNICAMENTE el contenido de la columna DESCRIPCIÓN de esa tabla.
+  Limpia el valor extraído: quita el prefijo "POR " si lo hay, quita códigos ONU ("UN 3077", "CLASE 9", "/ CLASE: 09"), quita lotes numéricos (ej: "0012-21416"), quita sufijos "- GRANEL" o "/ GRANEL" (pero mantén "A GRANEL" si es parte del nombre).
+  El resultado debe ser solo el nombre del material. Ejemplos:
+  "POR CONCENTRADO DE ZN UN 3077 CLASE 9 MISCELANEOS MATERIALES PELIGROSOS" → extraes: "CONCENTRADO DE ZN"
+  "POR CONCENTRADO DE PLATA Y ORO - GRANEL / CLASE: 09 UN: 3077" → extraes: "CONCENTRADO DE PLATA Y ORO"
+  "POR MINERAL AURIFERO" → extraes: "MINERAL AURIFERO"
+
+=== CAMPOS QUE SIEMPRE VAN NULL (no busques estos en el documento) ===
+- empresa: null (se determina automáticamente desde la base de datos según la placa)
 - deposito: null (se calcula automáticamente según el punto de llegada)
-- tn_recibida: null (viene del ticket)
-- tn_recibida_data_cruda: null (viene del ticket)
-- ticket: null (viene del ticket)
+- tn_recibida: null (se carga manualmente desde el ticket)
+- tn_recibida_data_cruda: null
+- ticket: null
+- precio_unitario, divisa, precio_final, pcosto, divisa_cost, costo_final, margen_operativo: null (se calculan desde el tarifario)
 
-Campos financieros (siempre null, se calculan automáticamente):
-- precio_unitario, divisa, precio_final, pcosto, divisa_cost, costo_final, margen_operativo
-
-Responde SOLO con el JSON, sin texto adicional ni markdown.
-Si es válido, incluye "es_documento_valido": true al inicio del JSON:
+Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
 {
   "es_documento_valido": true,
+  "fecha": "...",
   "mes": "...",
   "semana": "...",
-  "fecha": "...",
   "grt": "...",
   "transportista": "...",
   "unidad": "...",
-  "empresa": "...",
-  "tn_enviado": null,
+  "empresa": null,
+  "tn_enviado": ...,
   "deposito": null,
   "tn_recibida": null,
   "tn_recibida_data_cruda": null,
@@ -176,19 +202,7 @@ Si es válido, incluye "es_documento_valido": true al inicio del JSON:
           },
           {
             role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: prompt,
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:image/png;base64,${imageBase64}`,
-                  detail: 'high',
-                },
-              },
-            ],
+            content: `${prompt}\n\n---CONTENIDO DEL DOCUMENTO---\n${pdfText}`,
           },
         ],
         max_tokens: 2048,
@@ -216,10 +230,7 @@ Si es válido, incluye "es_documento_valido": true al inicio del JSON:
       // Remover el campo de validación antes de pasar los datos
       delete extractedData.es_documento_valido;
 
-      // Normalizar nombres de empresa y cliente
-      if (extractedData.empresa) {
-        extractedData.empresa = this.normalizeCompanyName(extractedData.empresa);
-      }
+      // Normalizar nombre de cliente (empresa ya no se extrae del PDF)
       if (extractedData.cliente) {
         extractedData.cliente = this.normalizeCompanyName(extractedData.cliente);
       }

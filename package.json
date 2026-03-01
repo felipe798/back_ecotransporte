@@ -46,6 +46,7 @@
         "nestjs-paginate": "^10.0.0",
         "nodemailer": "^6.9.16",
         "openai": "^6.22.0",
+        "pdf-parse": "^2.4.5",
         "pdf-to-png-converter": "^3.11.0",
         "pg": "^8.18.0",
         "reflect-metadata": "^0.2.2",
@@ -53,8 +54,7 @@
         "rxjs": "^7.8.1",
         "typeorm": "^0.3.20",
         "typeorm-extension": "^3.6.3",
-        "uuid": "^11.0.3",
-        "cloudinary": "^1.32.0"
+        "uuid": "^11.0.3"
     },
     "devDependencies": {
         "@babel/cli": "^7.26.4",
@@ -66,6 +66,7 @@
         "@types/jest": "29.5.14",
         "@types/multer": "^1.4.12",
         "@types/node": "^22.10.5",
+        "@types/pdf-parse": "^1.1.5",
         "@types/supertest": "^6.0.2",
         "@typescript-eslint/eslint-plugin": "^8.19.0",
         "@typescript-eslint/parser": "^8.19.0",

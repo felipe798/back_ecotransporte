@@ -311,27 +311,13 @@ export class DocumentsService {
     console.log('  Llegadas:', uniqueValues.llegadas.length, uniqueValues.llegadas);
     console.log('  Materiales:', uniqueValues.materiales.length, uniqueValues.materiales);
 
-    // Normalizar cliente - primero intentar con empresa (que suele ser el remitente real)
+    // Normalizar cliente: comparar el nombre extraído del campo DENOMINACIÓN con el tarifario
     console.log('\n--- Normalizando CLIENTE ---');
-    let clienteNormalizado = false;
-    
-    // Primero intentar con empresa (remitente), ya que suele ser el cliente real
-    if (empresa) {
-      console.log('Probando con empresa:', empresa);
-      const normalizedEmpresa = this.findBestMatch(empresa, uniqueValues.clientes);
-      if (normalizedEmpresa) {
-        documentData.cliente = normalizedEmpresa;
-        clienteNormalizado = true;
-      }
-    }
-    
-    // Si no encontró con empresa, intentar con cliente
-    if (!clienteNormalizado && cliente) {
+    if (cliente) {
       console.log('Probando con cliente:', cliente);
       const normalizedCliente = this.findBestMatch(cliente, uniqueValues.clientes);
       if (normalizedCliente) {
         documentData.cliente = normalizedCliente;
-        clienteNormalizado = true;
       }
     }
 
