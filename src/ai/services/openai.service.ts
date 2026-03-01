@@ -25,24 +25,38 @@ export class OpenAIService {
     console.log('Buffer recibido:', !!pdfBuffer);
     console.log('Tamaño del buffer:', pdfBuffer ? pdfBuffer.length : 0, 'bytes');
 
-    let pdfParseLib: any;
+    let parseFn: (buffer: Buffer, options?: any) => Promise<any>;
     try {
-      // Usar require() en runtime para garantizar la función callable en CommonJS/Docker
-      // El import estático de TypeScript puede resolver a un objeto en vez de una función
-      pdfParseLib = require('pdf-parse');
-      // Algunos builds lo anidan en .default
-      if (typeof pdfParseLib !== 'function' && typeof pdfParseLib?.default === 'function') {
-        pdfParseLib = pdfParseLib.default;
-      }
-      console.log('pdf-parse cargado correctamente, tipo:', typeof pdfParseLib);
-      if (typeof pdfParseLib !== 'function') {
-        console.error('pdf-parse NO es una función. Keys disponibles:', Object.keys(pdfParseLib || {}));
-        throw new Error(`pdf-parse no es una función, tipo recibido: ${typeof pdfParseLib}`);
+      const mod = require('pdf-parse');
+      console.log('pdf-parse módulo cargado, tipo:', typeof mod);
+
+      if (typeof mod === 'function') {
+        // Caso normal: el módulo exporta directamente la función
+        parseFn = mod;
+        console.log('pdf-parse: usando export directo (función)');
+      } else if (typeof mod?.default === 'function') {
+        // Caso ESM compilado: está en .default
+        parseFn = mod.default;
+        console.log('pdf-parse: usando mod.default (función)');
+      } else if (mod?.PDFParse) {
+        // Caso Docker/Render: expone la clase PDFParse internamente
+        // Se instancia y se llama al método .pdf() como hace la librería internamente
+        const PDFParseClass = mod.PDFParse;
+        console.log('pdf-parse: usando clase PDFParse directamente (entorno Docker)');
+        parseFn = async (buffer: Buffer, options?: any) => {
+          const parser = new PDFParseClass();
+          return parser.pdf(buffer, options);
+        };
+      } else {
+        console.error('pdf-parse: estructura desconocida. Keys:', Object.keys(mod || {}));
+        throw new Error(`Estructura de pdf-parse no reconocida. Keys: ${Object.keys(mod || {}).join(', ')}`);
       }
     } catch (importErr) {
-      console.error('ERROR al cargar pdf-parse:', importErr?.message);
+      console.error('ERROR al cargar/preparar pdf-parse:', importErr?.message);
       throw importErr;
     }
+    // Alias para mantener el resto del código igual
+    const pdfParseLib = parseFn;
 
     let data: any;
     try {
