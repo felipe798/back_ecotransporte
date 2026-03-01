@@ -146,6 +146,121 @@ export class OpenAIService {
     return cleaned;
   }
 
+  /**
+   * Extrae campos críticos directamente del texto PDF usando regex.
+   * Determinista — no depende de OpenAI. Sobreescribe los valores alucinados.
+   */
+  private extractCriticalFieldsFromText(pdfText: string): {
+    partida?: string;
+    llegada?: string;
+    cliente?: string;
+    grt?: string;
+    transportista?: string;
+    unidad?: string;
+    tn_enviado?: number;
+  } {
+    const result: any = {};
+
+    // GRT — línea con "ELECTRÓNICA" seguida del código
+    const grtMatch = pdfText.match(/ELECTR[OÓ]NICA\s+([A-Z0-9]+-\d+)/i);
+    if (grtMatch) result.grt = grtMatch[1].trim();
+
+    // TRANSPORTISTA — "CONDUCTOR PRINCIPAL:DNI XXXXXXXX - NOMBRE"
+    const transportistaMatch = pdfText.match(/CONDUCTOR PRINCIPAL\s*:\s*DNI\s+\d+\s*-\s*(.+)/i);
+    if (transportistaMatch) result.transportista = transportistaMatch[1].trim();
+
+    // UNIDAD — placa de "VEHÍCULO PRINCIPAL:" (6-7 chars alfanuméricos)
+    const unidadMatch = pdfText.match(/VEH[IÍ]CULO PRINCIPAL\s*:\s*([A-Z0-9]{2,3}-?[A-Z0-9]{3,4})(?:\b|\s)/i);
+    if (unidadMatch) result.unidad = unidadMatch[1].replace(/-/g, '').trim();
+
+    // TN_ENVIADO — "PESO BRUTO TOTAL (TNE):"
+    const tnMatch = pdfText.match(/PESO BRUTO TOTAL\s*\(TNE\)\s*:\s*([\d.]+)/i);
+    if (tnMatch) result.tn_enviado = parseFloat(tnMatch[1]);
+
+    // CLIENTE — primera aparición de "DENOMINACIÓN:" (sección REMITENTE)
+    const denominacionMatch = pdfText.match(/DENOMINACI[OÓ]N\s*:\s*(.+)/i);
+    if (denominacionMatch) result.cliente = this.normalizeCompanyName(denominacionMatch[1].trim());
+
+    // PARTIDA — "PUNTO DE PARTIDA:(UBIGEO) DEPT - PROV - DIST - dirección..."
+    const partidaRaw = pdfText.match(/PUNTO DE PARTIDA\s*:\s*\(\d+\)\s*(.+)/i);
+    if (partidaRaw) {
+      const parts = partidaRaw[1].split(/\s+-\s+/);
+      if (parts.length >= 3) {
+        const dep = parts[0].trim();
+        const prov = parts[1].trim();
+        const dist = parts[2].trim();
+        result.partida = `${dep}-${prov}-${dist}`;
+      }
+    }
+
+    // LLEGADA — "PUNTO DE LLEGADA:(UBIGEO) DEPT - PROV - DIST [(SUFIJO)] - dirección..."
+    // El distrito puede tener un sufijo entre paréntesis ej: "CALLAO (IMPALA)"
+    const llegadaRaw = pdfText.match(/PUNTO DE LLEGADA\s*:\s*\(\d+\)\s*(.+)/i);
+    if (llegadaRaw) {
+      const parts = llegadaRaw[1].split(/\s+-\s+/);
+      if (parts.length >= 3) {
+        const dep = parts[0].trim();
+        const prov = parts[1].trim();
+        // El distrito es parts[2] — puede incluir "(IMPALA)" etc.
+        // Limpiar texto de dirección que haya escapado (empieza con mayúsculas + punto)
+        let dist = parts[2].trim();
+        // Quitar cualquier texto de dirección que pueda haber quedado al final
+        dist = dist.replace(/\s+[A-Z]{3,}\..*$/, '').trim();
+        result.llegada = `${dep}-${prov}-${dist}`;
+      }
+    }
+
+    console.log('=== REGEX EXTRACCIÓN DIRECTA ===');
+    console.log('GRT:', result.grt ?? '(no encontrado)');
+    console.log('Transportista:', result.transportista ?? '(no encontrado)');
+    console.log('Unidad:', result.unidad ?? '(no encontrado)');
+    console.log('Cliente (remitente):', result.cliente ?? '(no encontrado)');
+    console.log('Partida:', result.partida ?? '(no encontrado)');
+    console.log('Llegada:', result.llegada ?? '(no encontrado)');
+    console.log('================================');
+    return result;
+  }
+
+  /**
+   * Valida que los campos extraídos por OpenAI existan literalmente en el PDF.
+   * Detecta alucinaciones — si un campo no aparece en el texto, lo pone en null.
+   */
+  private validateAgainstPdfText(extractedData: any, pdfText: string): any {
+    const validated = { ...extractedData };
+    const pdfUpper = pdfText.toUpperCase();
+
+    // Validar GRT
+    if (validated.grt && !pdfUpper.includes(validated.grt.toUpperCase())) {
+      console.warn(`⚠️ VALIDACIÓN: grt "${validated.grt}" no encontrado en PDF → null`);
+      validated.grt = null;
+    }
+
+    // Validar transportista — al menos 2 palabras del nombre deben estar en el PDF
+    if (validated.transportista) {
+      const words = validated.transportista.split(' ').filter((w: string) => w.length > 3);
+      const foundCount = words.filter((w: string) => pdfUpper.includes(w.toUpperCase())).length;
+      if (foundCount < Math.min(2, words.length)) {
+        console.warn(`⚠️ VALIDACIÓN: transportista "${validated.transportista}" no encontrado en PDF → null`);
+        validated.transportista = null;
+      }
+    }
+
+    // Validar cliente — la palabra principal debe estar en el PDF
+    if (validated.cliente) {
+      const mainWord = validated.cliente
+        .replace(/S\.A\.C\.|S\.A\.|S\.R\.L\.|E\.I\.R\.L\./gi, '')
+        .trim()
+        .split(' ')
+        .find((w: string) => w.length > 3);
+      if (mainWord && !pdfUpper.includes(mainWord.toUpperCase())) {
+        console.warn(`⚠️ VALIDACIÓN: cliente "${validated.cliente}" ("${mainWord}") no encontrado en PDF → null`);
+        validated.cliente = null;
+      }
+    }
+
+    return validated;
+  }
+
   async extractDocumentData(pdfBuffer: Buffer): Promise<any> {
     try {
       console.log('=== EXTRACT DOCUMENT DATA - INICIO ===');
@@ -161,6 +276,8 @@ export class OpenAIService {
       }
 
       const prompt = `Analiza el siguiente texto extraído de un documento y determina si es una Guía de Remisión Transportista Electrónica u otro documento comercial de transporte de Perú.
+
+⚠️ REGLA FUNDAMENTAL: SOLO extrae información que aparezca LITERALMENTE en el texto del documento. NUNCA inventes datos, NUNCA uses información de documentos anteriores, NUNCA completes campos con suposiciones. Si no encuentras exactamente la etiqueta indicada, devuelve null. Cada campo debe poder verificarse palabra por palabra en el texto proporcionado.
 
 PRIMERO: Si el texto NO corresponde a un documento de transporte (recetas, facturas no relacionadas, documentos personales, etc.), responde SOLO con:
 {"es_documento_valido": false, "motivo_rechazo": "Descripción breve"}
@@ -197,10 +314,13 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Ejemplo: "GUÍA DE REMISIÓN REMITENTE EG07-5784" → extraes: "EG07-5784"
   Cópialo tal cual.
 
-- cliente: Busca el campo "DENOMINACIÓN:" que aparece en la sección del DESTINATARIO (no del remitente). Extrae el nombre que aparece después.
+- cliente: Busca el campo "DENOMINACIÓN:" que aparece en la sección del REMITENTE (es la PRIMERA aparición de "DENOMINACIÓN:" en el documento, NO la que está dentro de OBSERVACIONES o la sección DESTINATARIO al final). El REMITENTE es quien envía la carga, es el cliente de transporte.
+  Extrae el nombre que aparece después.
   Si el nombre tiene formato "NOMBRE LARGO - NOMBRE CORTO S.A.C.", usa SOLO la parte después del último guión.
   Si no tiene guión, abrevia: reemplaza "SOCIEDAD ANONIMA CERRADA" por "S.A.C.", "SOCIEDAD ANONIMA" por "S.A.".
+  Ejemplo: "DENOMINACIÓN:PALTARUMI SOCIEDAD ANONIMA CERRADA - PALTARUMI S.A.C." → extraes: "PALTARUMI S.A.C."
   Ejemplo: "DENOMINACIÓN:MONARCA GOLD S.A.C." → extraes: "MONARCA GOLD S.A.C."
+  IMPORTANTE: Si en OBSERVACIONES dice "DESTINATARIO: ... - OTRA EMPRESA", ignora eso. El cliente es siempre el REMITENTE.
 
 - partida: Busca la línea que contiene "PUNTO DE PARTIDA:". Esa línea tiene el formato:
   PUNTO DE PARTIDA:(CÓDIGO) DEPARTAMENTO - PROVINCIA - DISTRITO - dirección extra...
@@ -209,9 +329,11 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Ejemplo: "PUNTO DE PARTIDA:(130104) LA LIBERTAD - TRUJILLO - HUANCHACO - CAR. PANAMERICANA KM. 584" → extraes: "LA LIBERTAD-TRUJILLO-HUANCHACO"
 
 - llegada: Igual que partida pero busca "PUNTO DE LLEGADA:". Mismas reglas de extracción.
-  Excepción: si el nombre del distrito incluye una aclaración entre paréntesis reconocida (ej: "CALLAO (IMPALA)"), mantenla.
+  CRÍTICO: si el nombre del distrito incluye una aclaración entre paréntesis (ej: "CALLAO (IMPALA)", "CALLAO (CONCHÁN)"), DEBES incluirla en el resultado separada por espacio.
   Ejemplo: "PUNTO DE LLEGADA:(070101) CALLAO - CALLAO - CALLAO (IMPALA) - AV. NÉSTOR GAMBETA..." → extraes: "CALLAO-CALLAO-CALLAO (IMPALA)"
   Ejemplo: "PUNTO DE LLEGADA:(021806) ANCASH - SANTA - NEPEÑA - OTR. QUEBRADA SANTA LUCIA..." → extraes: "ANCASH-SANTA-NEPEÑA"
+  Ejemplo: "PUNTO DE LLEGADA:(150202) LIMA - BARRANCA - PARAMONGA - PALTARUMI NRO S/N..." → extraes: "LIMA-BARRANCA-PARAMONGA"
+  Recuerda: SOLO los 3 primeros niveles geográficos (con sufijo entre paréntesis si lo hay), nada de direcciones.
 
 - transportado: Busca en la tabla del documento que tiene columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD".
   Extrae ÚNICAMENTE el contenido de la columna DESCRIPCIÓN de esa tabla.
@@ -344,6 +466,71 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
         const weekNum = parseInt(String(extractedData.semana), 10);
         if (!isNaN(weekNum)) {
           extractedData.semana = String(weekNum);
+        }
+      }
+
+      // === SOLUCIÓN 3: Validación cruzada contra texto PDF ===
+      // Detecta alucinaciones comparando campos con el texto real del PDF
+      extractedData = this.validateAgainstPdfText(extractedData, pdfText);
+
+      // === SOLUCIÓN 4: Sobreescribir con extracción directa por regex ===
+      // Los campos críticos (partida, llegada, cliente, grt, transportista, unidad, tn_enviado)
+      // se extraen directamente del PDF — son más confiables que OpenAI
+      const regexFields = this.extractCriticalFieldsFromText(pdfText);
+      let overrideCount = 0;
+      for (const [key, value] of Object.entries(regexFields)) {
+        if (value !== undefined && value !== null) {
+          if (extractedData[key] !== value) {
+            console.log(`🔧 OVERRIDE regex: ${key}: "${extractedData[key]}" → "${value}"`);
+            overrideCount++;
+          }
+          extractedData[key] = value;
+        }
+      }
+      if (overrideCount > 0) {
+        console.log(`🔧 Total overrides por regex: ${overrideCount} campos corregidos`);
+      }
+
+      // === SOLUCIÓN 5: Reintento si campos críticos siguen en null ===
+      // Se reintenta si grt o transportista están vacíos (probable falla de extracción)
+      const criticalFieldsMissing = !extractedData.grt || !extractedData.transportista;
+      if (criticalFieldsMissing) {
+        console.warn('⚠️ REINTENTO: campos críticos nulos, reintentando con prompt más estricto...');
+        try {
+          const retryResponse = await this.openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+              {
+                role: 'system',
+                content: 'Eres un extractor estricto de datos de guías de remisión peruana. Tu ÚNICA tarea es encontrar valores exactos que aparecen en el texto. Nunca inventes. Si no está, pon null.',
+              },
+              {
+                role: 'user',
+                content: `Extrae SOLO estos campos del texto. Copia los valores EXACTAMENTE como aparecen:\n\n- grt: código después de "GUÍA DE REMISIÓN TRANSPORTISTA ELECTRÓNICA" (formato: XXX1-000000)\n- transportista: nombre después de "CONDUCTOR PRINCIPAL:DNI XXXXXXXX -"\n- cliente: nombre en la primera "DENOMINACIÓN:" del documento (sección REMITENTE, NO el destinatario de OBSERVACIONES)\n\nResponde SOLO con JSON: {"grt": "...", "transportista": "...", "cliente": "..."}\n\n---TEXTO---\n${pdfText}`,
+              },
+            ],
+            max_tokens: 256,
+            temperature: 0,
+          });
+          const retryContent = retryResponse.choices[0].message.content;
+          const retryJson = retryContent?.match(/\{[\s\S]*\}/);
+          if (retryJson) {
+            const retryData = JSON.parse(retryJson[0]);
+            if (retryData.grt && !extractedData.grt) {
+              console.log(`🔁 REINTENTO: grt recuperado: "${retryData.grt}"`);
+              extractedData.grt = retryData.grt;
+            }
+            if (retryData.transportista && !extractedData.transportista) {
+              console.log(`🔁 REINTENTO: transportista recuperado: "${retryData.transportista}"`);
+              extractedData.transportista = retryData.transportista;
+            }
+            if (retryData.cliente && !extractedData.cliente) {
+              console.log(`🔁 REINTENTO: cliente recuperado: "${retryData.cliente}"`);
+              extractedData.cliente = this.normalizeCompanyName(retryData.cliente);
+            }
+          }
+        } catch (retryErr: any) {
+          console.warn('⚠️ REINTENTO falló:', retryErr?.message);
         }
       }
 
