@@ -1,4 +1,5 @@
 import { IsOptional, IsString, IsNumber, IsDate, IsArray } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateDocumentDto {
   @IsOptional()
@@ -11,6 +12,7 @@ export class UpdateDocumentDto {
 
   @IsOptional()
   @IsDate()
+  @Type(() => Date)
   fecha?: Date;
 
   @IsOptional()
