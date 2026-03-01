@@ -288,6 +288,24 @@ export class DocumentsService {
   }
 
   /**
+   * Normaliza nombres geográficos con variantes oficiales largas.
+   * El PDF a veces usa el nombre oficial completo de la provincia/departamento
+   * mientras que el tarifario usa el nombre corto/común.
+   * Ej: "PROV. CONST. DEL CALLAO" → "CALLAO"
+   *     "PROVINCIA CONSTITUCIONAL DEL CALLAO" → "CALLAO"
+   */
+  private normalizeGeoName(name: string): string {
+    if (!name) return name;
+    return name
+      // Variantes de la Provincia Constitucional del Callao
+      .replace(/PROV\.?\s*CONST\.?\s*DEL\s+CALLAO/gi, 'CALLAO')
+      .replace(/PROVINCIA\s+CONSTITUCIONAL\s+DEL\s+CALLAO/gi, 'CALLAO')
+      // Limpiar espacios extra resultantes
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
    * Normaliza los campos cliente, partida, llegada y transportado (material)
    * comparándolos con los valores del tarifario y ajustando al más parecido
    */
@@ -324,7 +342,7 @@ export class DocumentsService {
     // Normalizar partida
     console.log('\n--- Normalizando PARTIDA ---');
     if (partida) {
-      const normalizedPartida = this.findBestMatch(partida, uniqueValues.partidas);
+      const normalizedPartida = this.findBestMatch(this.normalizeGeoName(partida), uniqueValues.partidas);
       if (normalizedPartida) {
         documentData.partida = normalizedPartida;
       }
@@ -333,7 +351,7 @@ export class DocumentsService {
     // Normalizar llegada
     console.log('\n--- Normalizando LLEGADA ---');
     if (llegada) {
-      const normalizedLlegada = this.findBestMatch(llegada, uniqueValues.llegadas);
+      const normalizedLlegada = this.findBestMatch(this.normalizeGeoName(llegada), uniqueValues.llegadas);
       if (normalizedLlegada) {
         documentData.llegada = normalizedLlegada;
       }
@@ -684,6 +702,26 @@ export class DocumentsService {
         console.log('✓ Tarifa encontrada por cliente+partida (primera coincidencia)');
         // Actualizar la llegada con la del tarifario
         documentData.llegada = tarifa.llegada;
+      }
+    }
+
+    // 4. Fallback: buscar por partida + llegada + material SIN cliente
+    // Esto ocurre cuando el PDF muestra el almacén/terminal como destinatario
+    // en vez del cliente real (ej: LOGISMINSA en vez de ECO GOLD S.A.C.)
+    if (!tarifa && llegada && transportado) {
+      tarifa = await this.clientTariffService.findByRutaAndMaterial(partida, llegada, transportado);
+      if (tarifa) {
+        console.log(`✓ Tarifa encontrada por ruta+material (sin cliente). Cliente corregido: "${cliente}" → "${tarifa.cliente}"`);
+        documentData.cliente = tarifa.cliente; // corregir el cliente al real
+      }
+    }
+
+    // 5. Último fallback: buscar solo por partida + llegada
+    if (!tarifa && llegada) {
+      tarifa = await this.clientTariffService.findByRuta(partida, llegada);
+      if (tarifa) {
+        console.log(`✓ Tarifa encontrada por ruta (sin cliente ni material). Cliente corregido: "${cliente}" → "${tarifa.cliente}"`);
+        documentData.cliente = tarifa.cliente;
       }
     }
 

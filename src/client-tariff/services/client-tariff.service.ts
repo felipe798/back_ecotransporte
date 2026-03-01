@@ -81,6 +81,26 @@ export class ClientTariffService {
     });
   }
 
+  /**
+   * Búsqueda por ruta + material SIN importar el cliente.
+   * Fallback para cuando el cliente extraído del PDF no coincide con el tarifario
+   * (ej: el PDF muestra el almacén como destinatario en vez del cliente real).
+   */
+  async findByRutaAndMaterial(partida: string, llegada: string, material: string): Promise<ClientTariffEntity | null> {
+    return await this.clientTariffRepository.findOne({
+      where: { partida, llegada, material },
+    });
+  }
+
+  /**
+   * Búsqueda por ruta (partida+llegada) SIN importar el cliente ni material.
+   */
+  async findByRuta(partida: string, llegada: string): Promise<ClientTariffEntity | null> {
+    return await this.clientTariffRepository.findOne({
+      where: { partida, llegada },
+    });
+  }
+
   async findByCliente(cliente: string): Promise<ClientTariffEntity[]> {
     return await this.clientTariffRepository.find({
       where: { cliente },
