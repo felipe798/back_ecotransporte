@@ -1,6 +1,5 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import OpenAI from 'openai';
-import * as pdfParse from 'pdf-parse';
 
 @Injectable()
 export class OpenAIService {
@@ -28,8 +27,18 @@ export class OpenAIService {
 
     let pdfParseLib: any;
     try {
-      pdfParseLib = (pdfParse as any).default ?? pdfParse;
+      // Usar require() en runtime para garantizar la función callable en CommonJS/Docker
+      // El import estático de TypeScript puede resolver a un objeto en vez de una función
+      pdfParseLib = require('pdf-parse');
+      // Algunos builds lo anidan en .default
+      if (typeof pdfParseLib !== 'function' && typeof pdfParseLib?.default === 'function') {
+        pdfParseLib = pdfParseLib.default;
+      }
       console.log('pdf-parse cargado correctamente, tipo:', typeof pdfParseLib);
+      if (typeof pdfParseLib !== 'function') {
+        console.error('pdf-parse NO es una función. Keys disponibles:', Object.keys(pdfParseLib || {}));
+        throw new Error(`pdf-parse no es una función, tipo recibido: ${typeof pdfParseLib}`);
+      }
     } catch (importErr) {
       console.error('ERROR al cargar pdf-parse:', importErr?.message);
       throw importErr;
