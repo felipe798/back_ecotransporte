@@ -310,6 +310,11 @@ export class DocumentsService {
     if (unidadEncontrada) {
       documentData.unidadId = unidadEncontrada.id;
       console.log('✓ Unidad encontrada:', unidadEncontrada.placa);
+      // Asignar empresa desde la BD (siempre que exista)
+      if (unidadEncontrada.empresa) {
+        documentData.empresa = unidadEncontrada.empresa.nombre;
+        console.log('✓ Empresa asignada desde BD:', unidadEncontrada.empresa.nombre);
+      }
       // Solo usar el nombre de la empresa como transportista si el AI no extrajo uno
       if (!documentData.transportista && unidadEncontrada.empresa) {
         documentData.transportista = unidadEncontrada.empresa.nombre;
