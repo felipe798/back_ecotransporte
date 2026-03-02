@@ -295,7 +295,10 @@ export class DashboardController {
    */
   @Get('dias-con-viajes')
   async getDiasConViajes(@Query() filters: DashboardFilters) {
-    return await this.dashboardService.getDiasConViajes(filters);
+    console.log('[Controller] GET /dashboard/dias-con-viajes — filtros:', JSON.stringify(filters));
+    const result = await this.dashboardService.getDiasConViajes(filters);
+    console.log('[Controller] dias-con-viajes — respuesta:', result.length, 'filas');
+    return result;
   }
 
   /**

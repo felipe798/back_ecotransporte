@@ -131,4 +131,7 @@ export class DocumentEntity {
 
   @Column('text', { array: true, nullable: true, name: 'documentos' })
   documentos: string[];
+
+  @Column({ type: 'text', nullable: true })
+  motivo: string;
 }

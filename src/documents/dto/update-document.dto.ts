@@ -110,4 +110,8 @@ export class UpdateDocumentDto {
   @IsArray()
   @IsString({ each: true })
   documentos?: string[];
+
+  @IsOptional()
+  @IsString()
+  motivo?: string;
 }
