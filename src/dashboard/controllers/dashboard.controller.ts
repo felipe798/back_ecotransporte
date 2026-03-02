@@ -313,4 +313,66 @@ export class DashboardController {
   async getResumenViajesCliente(@Query() filters: DashboardFilters) {
     return await this.dashboardService.getResumenViajesCliente(filters);
   }
+
+  // =====================================================
+  // TABLAS DETALLADAS (VENTA / COSTO / MARGEN)
+  // =====================================================
+
+  /**
+   * Tablas detalladas de Venta, Costo y Margen por cliente/tarifa y empresa
+   * Requiere query param: mes (obligatorio)
+   */
+  @Get('tablas-detalladas')
+  async getTablasDetalladas(@Query('mes') mes: string) {
+    if (!mes) {
+      return { error: 'El parámetro mes es obligatorio' };
+    }
+    return await this.dashboardService.getTablasDetalladas(mes);
+  }
+
+  /**
+   * Opciones para la tabla de unidades: meses, semanas del mes, filas seleccionables
+   */
+  @Get('tabla-unidades-opciones')
+  async getTablaUnidadesOpciones(@Query('mes') mes?: string) {
+    return await this.dashboardService.getTablaUnidadesOpciones(mes);
+  }
+
+  /**
+   * Tabla de unidades desglosada por semana para una tarifa específica
+   */
+  @Get('tabla-unidades')
+  async getTablaUnidades(
+    @Query('mes') mes: string,
+    @Query('semanaInicio') semanaInicio: string,
+    @Query('semanaFin') semanaFin: string,
+    @Query('tarifaKey') tarifaKey: string,
+  ) {
+    if (!mes || !semanaInicio || !semanaFin || !tarifaKey) {
+      return { error: 'Parámetros obligatorios: mes, semanaInicio, semanaFin, tarifaKey' };
+    }
+    return await this.dashboardService.getTablaUnidades(mes, semanaInicio, semanaFin, tarifaKey);
+  }
+
+  /**
+   * Opciones para el reporte de guías: empresas y meses disponibles
+   */
+  @Get('reporte-guias-opciones')
+  async getReporteGuiasOpciones() {
+    return await this.dashboardService.getReporteGuiasOpciones();
+  }
+
+  /**
+   * Reporte detallado de guías emitidas por empresa de transporte y mes
+   */
+  @Get('reporte-guias')
+  async getReporteGuias(
+    @Query('empresa') empresa: string,
+    @Query('mes') mes: string,
+  ) {
+    if (!empresa || !mes) {
+      return { error: 'Parámetros obligatorios: empresa, mes' };
+    }
+    return await this.dashboardService.getReporteGuias(empresa, mes);
+  }
 }

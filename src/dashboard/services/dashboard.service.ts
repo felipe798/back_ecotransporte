@@ -4,6 +4,7 @@ import { Repository, IsNull, Not } from 'typeorm';
 import { DocumentEntity } from '../../documents/entities/document.entity';
 import { UnidadEntity } from '../../unidad/entities/unidad.entity';
 import { EmpresaTransporteEntity } from '../../empresa-transporte/entities/empresa-transporte.entity';
+import { ClientTariffEntity } from '../../client-tariff/entities/client-tariff.entity';
 
 export interface DashboardFilters {
   mes?: string;
@@ -24,6 +25,8 @@ export class DashboardService {
     private unidadRepository: Repository<UnidadEntity>,
     @InjectRepository(EmpresaTransporteEntity)
     private empresaRepository: Repository<EmpresaTransporteEntity>,
+    @InjectRepository(ClientTariffEntity)
+    private clientTariffRepository: Repository<ClientTariffEntity>,
   ) {}
 
   /**
@@ -851,6 +854,754 @@ export class DashboardService {
     return {
       viajes: Number(viajesResult.viajes) || 0,
       traslados: Number(trasladosResult.traslados) || 0,
+    };
+  }
+
+  // =====================================================
+  // TABLAS DETALLADAS (VENTA / COSTO / MARGEN)
+  // =====================================================
+
+  /**
+   * Definición de las 7 filas fijas (agrupaciones predefinidas de tarifas).
+   * Cada una matchea documentos por cliente + condiciones de partida/llegada/material.
+   */
+  private getFixedRows(): Array<{
+    label: string;
+    match: (doc: any) => boolean;
+    matchTariff: (t: ClientTariffEntity) => boolean;
+    divisa: string;
+  }> {
+    return [
+      {
+        label: 'Paltarumi',
+        match: (doc) => (doc.cliente || '').toUpperCase().includes('PALTARUMI'),
+        matchTariff: (t) => t.cliente.toUpperCase().includes('PALTARUMI'),
+        divisa: 'USD',
+      },
+      {
+        label: 'ECO-GOLD-Concentrado',
+        match: (doc) => {
+          const cl = (doc.cliente || '').toUpperCase();
+          const mat = (doc.transportado || '').toUpperCase();
+          const lleg = (doc.llegada || '').toUpperCase();
+          return cl.includes('ECO GOLD') && mat.includes('CONCENTRADO') && lleg.includes('VENTANILLA');
+        },
+        matchTariff: (t) => {
+          return t.cliente.toUpperCase().includes('ECO GOLD')
+            && t.material.toUpperCase().includes('CONCENTRADO')
+            && t.llegada.toUpperCase().includes('VENTANILLA');
+        },
+        divisa: 'USD',
+      },
+      {
+        label: 'Polimetálicos',
+        match: (doc) => (doc.cliente || '').toUpperCase().includes('POLIMETALICOS'),
+        matchTariff: (t) => t.cliente.toUpperCase().includes('POLIMETALICOS'),
+        divisa: 'USD',
+      },
+      {
+        label: 'ECO-GOLD (Paramonga-Vent)',
+        match: (doc) => {
+          const cl = (doc.cliente || '').toUpperCase();
+          const part = (doc.partida || '').toUpperCase();
+          const lleg = (doc.llegada || '').toUpperCase();
+          const mat = (doc.transportado || '').toUpperCase();
+          return cl.includes('ECO GOLD') && part.includes('PARAMONGA') && lleg.includes('VENTANILLA') && mat.includes('CONCENTRADO');
+        },
+        matchTariff: (t) => {
+          return t.cliente.toUpperCase().includes('ECO GOLD')
+            && t.partida.toUpperCase().includes('PARAMONGA')
+            && t.llegada.toUpperCase().includes('VENTANILLA')
+            && t.material.toUpperCase().includes('CONCENTRADO');
+        },
+        divisa: 'USD',
+      },
+      {
+        label: 'ECO-GOLD-Mineral',
+        match: (doc) => {
+          const cl = (doc.cliente || '').toUpperCase();
+          const mat = (doc.transportado || '').toUpperCase();
+          return cl.includes('ECO GOLD') && mat.includes('MINERAL AURIFERO');
+        },
+        matchTariff: (t) => {
+          return t.cliente.toUpperCase().includes('ECO GOLD')
+            && t.material.toUpperCase().includes('MINERAL AURIFERO');
+        },
+        divisa: 'USD',
+      },
+      {
+        label: 'ECO-GOLD-Mineral Polimetálico',
+        match: (doc) => {
+          const cl = (doc.cliente || '').toUpperCase();
+          const mat = (doc.transportado || '').toUpperCase();
+          return cl.includes('ECO GOLD') && mat.includes('MINERAL POLIMETALICO');
+        },
+        matchTariff: (t) => {
+          return t.cliente.toUpperCase().includes('ECO GOLD')
+            && t.material.toUpperCase().includes('MINERAL POLIMETALICO');
+        },
+        divisa: 'USD',
+      },
+      {
+        label: 'MONARCA (Nepeña-Impala)',
+        match: (doc) => {
+          const cl = (doc.cliente || '').toUpperCase();
+          const part = (doc.partida || '').toUpperCase();
+          const lleg = (doc.llegada || '').toUpperCase();
+          return cl.includes('MONARCA') && part.includes('NEPE') && lleg.includes('IMPALA');
+        },
+        matchTariff: (t) => {
+          return t.cliente.toUpperCase().includes('MONARCA')
+            && t.partida.toUpperCase().includes('NEPE')
+            && t.llegada.toUpperCase().includes('IMPALA');
+        },
+        divisa: 'USD',
+      },
+    ];
+  }
+
+  /**
+   * Tablas Detalladas: Venta, Costo y Margen agrupados por cliente/tarifa y empresa
+   */
+  async getTablasDetalladas(mes: string): Promise<any> {
+    // 1. Obtener todos los documentos no anulados del mes
+    const docs = await this.createDocQuery()
+      .andWhere('doc.mes = :mes', { mes })
+      .getMany();
+
+    // 2. Obtener todas las tarifas
+    const tariffs = await this.clientTariffRepository.find({ order: { id: 'ASC' } });
+
+    // 3. Obtener empresas activas que tienen documentos en este mes
+    // Resolver empresa por código: unidad.placa → unidad.empresa_id → empresa_transporte.nombre
+    const allUnidades = await this.unidadRepository.find();
+    const allEmpresas = await this.empresaRepository.find({ where: { estado: 'activo' }, order: { id: 'ASC' } });
+
+    // Mapear empresa_id → nombre
+    const empresaIdToNombre = new Map<number, string>();
+    for (const emp of allEmpresas) {
+      empresaIdToNombre.set(emp.id, emp.nombre);
+    }
+
+    // Mapear placa → nombre empresa (y unidadId → nombre empresa)
+    const unidadIdToEmpresa = new Map<number, string>();
+    const placaToEmpresa = new Map<string, string>();
+    for (const u of allUnidades) {
+      const empNombre = empresaIdToNombre.get(u.empresaId) || '';
+      if (empNombre) {
+        unidadIdToEmpresa.set(u.id, empNombre);
+        placaToEmpresa.set(u.placa.toUpperCase().trim(), empNombre);
+      }
+    }
+
+    // Helper para obtener el nombre de empresa de un documento
+    const getDocEmpresa = (doc: any): string => {
+      if (doc.unidadId && unidadIdToEmpresa.has(doc.unidadId)) {
+        return unidadIdToEmpresa.get(doc.unidadId);
+      }
+      const placa = (doc.unidad || '').toUpperCase().trim();
+      if (placa && placaToEmpresa.has(placa)) {
+        return placaToEmpresa.get(placa);
+      }
+      return '';
+    };
+
+    const empresasConActividad = [...new Set(docs.map(d => getDocEmpresa(d).toUpperCase().trim()).filter(e => e))];
+    const empresasColumna = allEmpresas
+      .filter(emp => empresasConActividad.includes(emp.nombre.toUpperCase().trim()))
+      .map(emp => emp.nombre);
+
+    // 4. Construir filas fijas
+    const fixedRows = this.getFixedRows();
+
+    // Marcar qué tarifas caen en filas fijas
+    const tariffUsedByFixed = new Set<number>();
+    for (const row of fixedRows) {
+      for (const t of tariffs) {
+        if (row.matchTariff(t)) {
+          tariffUsedByFixed.add(t.id);
+        }
+      }
+    }
+
+    // Marcar qué documentos caen en filas fijas
+    const docUsedByFixed = new Set<number>();
+    const filas: Array<{
+      label: string;
+      isFixed: boolean;
+      divisa: string;
+      data: {
+        general: { tne: number; importeVenta: number; importeCosto: number };
+        [empresa: string]: { tne: number; importeVenta: number; importeCosto: number };
+      };
+    }> = [];
+
+    for (const row of fixedRows) {
+      const fila: any = {
+        label: row.label,
+        isFixed: true,
+        divisa: row.divisa,
+        data: {
+          general: { tne: 0, importeVenta: 0, importeCosto: 0 },
+        },
+      };
+      for (const emp of empresasColumna) {
+        fila.data[emp] = { tne: 0, importeVenta: 0, importeCosto: 0 };
+      }
+
+      for (const doc of docs) {
+        if (row.match(doc)) {
+          docUsedByFixed.add(doc.id);
+          const tnRecibida = Number(doc.tn_recibida) || 0;
+          const precioUnit = Number(doc.precio_unitario) || 0;
+          const pcosto = Number(doc.pcosto) || 0;
+
+          fila.data.general.tne += tnRecibida;
+          fila.data.general.importeVenta += precioUnit * tnRecibida;
+          fila.data.general.importeCosto += pcosto * tnRecibida;
+
+          const docEmpresaName = getDocEmpresa(doc);
+          for (const emp of empresasColumna) {
+            if (emp.toUpperCase().trim() === docEmpresaName.toUpperCase().trim()) {
+              fila.data[emp].tne += tnRecibida;
+              fila.data[emp].importeVenta += precioUnit * tnRecibida;
+              fila.data[emp].importeCosto += pcosto * tnRecibida;
+            }
+          }
+        }
+      }
+      filas.push(fila);
+    }
+
+    // 5. Filas dinámicas: tarifas no cubiertas por las fijas
+    const dynamicTariffs = tariffs.filter(t => !tariffUsedByFixed.has(t.id));
+
+    // Agrupar tarifas dinámicas por (cliente + partida + llegada)
+    const dynamicGroups = new Map<string, { tariff: ClientTariffEntity; label: string }>();
+    for (const t of dynamicTariffs) {
+      const key = `${t.cliente}||${t.partida}||${t.llegada}`;
+      if (!dynamicGroups.has(key)) {
+        // Auto-generar label
+        const clienteShort = t.cliente.replace(/\s*S\.A\.C\.?\s*/i, '').trim();
+        const matShort = t.material ? ` - ${t.material}` : '';
+        dynamicGroups.set(key, { tariff: t, label: `${clienteShort}${matShort}` });
+      }
+    }
+
+    for (const [, group] of dynamicGroups) {
+      const t = group.tariff;
+      const fila: any = {
+        label: group.label,
+        isFixed: false,
+        divisa: t.moneda || t.divisa || 'USD',
+        data: {
+          general: { tne: 0, importeVenta: 0, importeCosto: 0 },
+        },
+      };
+      for (const emp of empresasColumna) {
+        fila.data[emp] = { tne: 0, importeVenta: 0, importeCosto: 0 };
+      }
+
+      for (const doc of docs) {
+        if (docUsedByFixed.has(doc.id)) continue;
+
+        const matchCliente = (doc.cliente || '').toUpperCase().trim() === t.cliente.toUpperCase().trim();
+        const matchPartida = (doc.partida || '').toUpperCase().trim() === t.partida.toUpperCase().trim();
+        const matchLlegada = (doc.llegada || '').toUpperCase().trim() === t.llegada.toUpperCase().trim();
+
+        if (matchCliente && matchPartida && matchLlegada) {
+          const tnRecibida = Number(doc.tn_recibida) || 0;
+          const precioUnit = Number(doc.precio_unitario) || 0;
+          const pcosto = Number(doc.pcosto) || 0;
+
+          fila.data.general.tne += tnRecibida;
+          fila.data.general.importeVenta += precioUnit * tnRecibida;
+          fila.data.general.importeCosto += pcosto * tnRecibida;
+
+          const docEmpresaName = getDocEmpresa(doc);
+          for (const emp of empresasColumna) {
+            if (emp.toUpperCase().trim() === docEmpresaName.toUpperCase().trim()) {
+              fila.data[emp].tne += tnRecibida;
+              fila.data[emp].importeVenta += precioUnit * tnRecibida;
+              fila.data[emp].importeCosto += pcosto * tnRecibida;
+            }
+          }
+        }
+      }
+
+      // Solo mostrar fila dinámica si tiene datos > 0
+      const hasData = fila.data.general.tne > 0 || fila.data.general.importeVenta > 0 || fila.data.general.importeCosto > 0;
+      if (hasData) {
+        filas.push(fila);
+      }
+    }
+
+    // 6. Calcular totales por divisa
+    const totales = {
+      USD: { general: { tne: 0, importeVenta: 0, importeCosto: 0 } as any },
+      PEN: { general: { tne: 0, importeVenta: 0, importeCosto: 0 } as any },
+    };
+    for (const emp of empresasColumna) {
+      totales.USD[emp] = { tne: 0, importeVenta: 0, importeCosto: 0 };
+      totales.PEN[emp] = { tne: 0, importeVenta: 0, importeCosto: 0 };
+    }
+
+    for (const fila of filas) {
+      const div = (fila.divisa || 'USD').toUpperCase().includes('PEN') ? 'PEN' : 'USD';
+      const target = totales[div];
+      for (const key of ['general', ...empresasColumna]) {
+        if (fila.data[key]) {
+          target[key].tne += fila.data[key].tne;
+          target[key].importeVenta += fila.data[key].importeVenta;
+          target[key].importeCosto += fila.data[key].importeCosto;
+        }
+      }
+    }
+
+    // 7. Margen de ganancia
+    const margen = {
+      USD: {
+        importeVenta: totales.USD.general.importeVenta,
+        importeCosto: totales.USD.general.importeCosto,
+        margen: totales.USD.general.importeVenta - totales.USD.general.importeCosto,
+      },
+      PEN: {
+        importeVenta: totales.PEN.general.importeVenta,
+        importeCosto: totales.PEN.general.importeCosto,
+        margen: totales.PEN.general.importeVenta - totales.PEN.general.importeCosto,
+      },
+      total: (totales.USD.general.importeVenta - totales.USD.general.importeCosto)
+           + (totales.PEN.general.importeVenta - totales.PEN.general.importeCosto),
+    };
+
+    return {
+      mes,
+      empresas: empresasColumna,
+      filas,
+      totales,
+      margen,
+    };
+  }
+
+  // =====================================================
+  // TABLA UNIDADES POR TARIFA (segundo popup)
+  // =====================================================
+
+  /**
+   * Devuelve las opciones disponibles para el selector de la tabla de unidades:
+   * - meses disponibles
+   * - semanas disponibles por mes
+   * - lista de filas fijas + dinámicas (label + key) basadas en tarifas del mes
+   */
+  async getTablaUnidadesOpciones(mes?: string): Promise<any> {
+    // Meses disponibles
+    const mesesRaw = await this.createDocQuery()
+      .select('DISTINCT doc.mes', 'mes')
+      .orderBy('doc.mes', 'ASC')
+      .getRawMany();
+    const meses = mesesRaw.map(r => r.mes).filter(Boolean);
+
+    // Semanas del mes seleccionado
+    let semanas: string[] = [];
+    if (mes) {
+      const semanasRaw = await this.createDocQuery()
+        .select('DISTINCT doc.semana', 'semana')
+        .andWhere('doc.mes = :mes', { mes })
+        .orderBy('doc.semana', 'ASC')
+        .getRawMany();
+      semanas = semanasRaw.map(r => r.semana).filter(Boolean);
+    }
+
+    // Construir lista de tarifas/filas seleccionables
+    const fixedRows = this.getFixedRows();
+
+    let fixedOptions: Array<{ key: string; label: string; isFixed: boolean }> = [];
+    let dynamicOptions: Array<{ key: string; label: string; isFixed: boolean }> = [];
+    if (mes) {
+      const tariffs = await this.clientTariffRepository.find({ order: { id: 'ASC' } });
+
+      // Verificar cuáles tienen datos en el mes
+      const docs = await this.createDocQuery()
+        .andWhere('doc.mes = :mes', { mes })
+        .getMany();
+
+      // Filtrar filas fijas: solo mostrar las que tienen docs en el mes
+      for (let i = 0; i < fixedRows.length; i++) {
+        const row = fixedRows[i];
+        const hasData = docs.some(doc => row.match(doc));
+        if (hasData) {
+          fixedOptions.push({ key: `fixed_${i}`, label: row.label, isFixed: true });
+        }
+      }
+
+      const tariffUsedByFixed = new Set<number>();
+      for (const row of fixedRows) {
+        for (const t of tariffs) {
+          if (row.matchTariff(t)) tariffUsedByFixed.add(t.id);
+        }
+      }
+      const dynamicTariffs = tariffs.filter(t => !tariffUsedByFixed.has(t.id));
+
+      const dynamicGroups = new Map<string, { tariff: ClientTariffEntity; label: string }>();
+      for (const t of dynamicTariffs) {
+        const key = `${t.cliente}||${t.partida}||${t.llegada}`;
+        if (!dynamicGroups.has(key)) {
+          const clienteShort = t.cliente.replace(/\s*S\.A\.C\.?\s*/i, '').trim();
+          const matShort = t.material ? ` - ${t.material}` : '';
+          dynamicGroups.set(key, { tariff: t, label: `${clienteShort}${matShort}` });
+        }
+      }
+
+      const docUsedByFixed = new Set<number>();
+      for (const doc of docs) {
+        for (const row of fixedRows) {
+          if (row.match(doc)) { docUsedByFixed.add(doc.id); break; }
+        }
+      }
+
+      for (const [key, group] of dynamicGroups) {
+        const t = group.tariff;
+        const hasData = docs.some(doc => {
+          if (docUsedByFixed.has(doc.id)) return false;
+          return (doc.cliente || '').toUpperCase().trim() === t.cliente.toUpperCase().trim()
+            && (doc.partida || '').toUpperCase().trim() === t.partida.toUpperCase().trim()
+            && (doc.llegada || '').toUpperCase().trim() === t.llegada.toUpperCase().trim();
+        });
+        if (hasData) {
+          dynamicOptions.push({ key: `dyn_${key}`, label: group.label, isFixed: false });
+        }
+      }
+    }
+
+    return { meses, semanas, opciones: [...fixedOptions, ...dynamicOptions] };
+  }
+
+  /**
+   * Tabla de Unidades: desglosa por unidad (placa) la carga semanal,
+   * viajes por ruta, promedio, P.U. y total, para una tarifa seleccionada.
+   */
+  async getTablaUnidades(
+    mes: string,
+    semanaInicio: string,
+    semanaFin: string,
+    tarifaKey: string,
+  ): Promise<any> {
+    const fixedRows = this.getFixedRows();
+    const tariffs = await this.clientTariffRepository.find({ order: { id: 'ASC' } });
+
+    // Determinar función de match y ruta según la tarifaKey
+    let matchFn: (doc: any) => boolean;
+    let rutaLabel = '';
+    let precioUnitario = 0;
+    let divisa = 'USD';
+
+    if (tarifaKey.startsWith('fixed_')) {
+      const idx = parseInt(tarifaKey.replace('fixed_', ''), 10);
+      const row = fixedRows[idx];
+      if (!row) return { error: 'Tarifa fija no encontrada' };
+      matchFn = row.match;
+      divisa = row.divisa;
+
+      // Buscar la tarifa correspondiente para obtener ruta y precio
+      for (const t of tariffs) {
+        if (row.matchTariff(t)) {
+          rutaLabel = `${(t.partida || '').split('-').pop()?.trim() || t.partida} - ${(t.llegada || '').split('-').pop()?.trim() || t.llegada}`;
+          precioUnitario = Number(t.precioVentaSinIgv) || 0;
+          divisa = t.moneda || row.divisa;
+          break;
+        }
+      }
+    } else if (tarifaKey.startsWith('dyn_')) {
+      const parts = tarifaKey.replace('dyn_', '').split('||');
+      if (parts.length !== 3) return { error: 'Tarifa dinámica inválida' };
+      const [cliente, partida, llegada] = parts;
+      matchFn = (doc) => {
+        return (doc.cliente || '').toUpperCase().trim() === cliente.toUpperCase().trim()
+          && (doc.partida || '').toUpperCase().trim() === partida.toUpperCase().trim()
+          && (doc.llegada || '').toUpperCase().trim() === llegada.toUpperCase().trim();
+      };
+      rutaLabel = `${(partida || '').split('-').pop()?.trim() || partida} - ${(llegada || '').split('-').pop()?.trim() || llegada}`;
+      // Buscar precio en tarifas
+      for (const t of tariffs) {
+        if (t.cliente.toUpperCase().trim() === cliente.toUpperCase().trim()
+          && t.partida.toUpperCase().trim() === partida.toUpperCase().trim()
+          && t.llegada.toUpperCase().trim() === llegada.toUpperCase().trim()) {
+          precioUnitario = Number(t.precioVentaSinIgv) || 0;
+          divisa = t.moneda || t.divisa || 'USD';
+          break;
+        }
+      }
+    } else {
+      return { error: 'Clave de tarifa inválida' };
+    }
+
+    // Obtener semanas en el rango
+    const semanasRaw = await this.createDocQuery()
+      .select('DISTINCT doc.semana', 'semana')
+      .andWhere('doc.mes = :mes', { mes })
+      .orderBy('doc.semana', 'ASC')
+      .getRawMany();
+    const todasSemanas = semanasRaw.map(r => r.semana).filter(Boolean);
+
+    // Filtrar semanas en el rango [semanaInicio, semanaFin]
+    const idxInicio = todasSemanas.indexOf(semanaInicio);
+    const idxFin = todasSemanas.indexOf(semanaFin);
+    const semanas = (idxInicio >= 0 && idxFin >= 0)
+      ? todasSemanas.slice(Math.min(idxInicio, idxFin), Math.max(idxInicio, idxFin) + 1)
+      : todasSemanas;
+
+    // Obtener documentos del mes en las semanas seleccionadas
+    const qb = this.createDocQuery()
+      .andWhere('doc.mes = :mes', { mes });
+    if (semanas.length > 0) {
+      qb.andWhere('doc.semana IN (:...semanas)', { semanas });
+    }
+    const docs = await qb.getMany();
+
+    // Filtrar docs que matchean la tarifa
+    const matchedDocs = docs.filter(d => matchFn(d));
+
+    // Agrupar por unidad (placa)
+    const unidadMap = new Map<string, {
+      placa: string;
+      semanaTn: { [semana: string]: number };
+      nViajes: number;
+      tnCarga: number;
+    }>();
+
+    for (const doc of matchedDocs) {
+      const placa = (doc.unidad || 'SIN PLACA').trim();
+      if (!unidadMap.has(placa)) {
+        unidadMap.set(placa, {
+          placa,
+          semanaTn: {},
+          nViajes: 0,
+          tnCarga: 0,
+        });
+      }
+      const entry = unidadMap.get(placa)!;
+      const sem = doc.semana || 'Sin semana';
+      const tn = Number(doc.tn_recibida) || 0;
+
+      entry.semanaTn[sem] = (entry.semanaTn[sem] || 0) + tn;
+      entry.nViajes += 1;
+      entry.tnCarga += tn;
+    }
+
+    // Construir filas
+    const filas = [];
+    const totalSemanas: { [semana: string]: number } = {};
+    let totalViajes = 0;
+    let totalTnCarga = 0;
+    let totalImporte = 0;
+
+    for (const sem of semanas) {
+      totalSemanas[sem] = 0;
+    }
+
+    for (const [, entry] of unidadMap) {
+      const totalCargaUnidad = entry.tnCarga;
+      const nViajes = entry.nViajes;
+      const promedio = nViajes > 0 ? totalCargaUnidad / nViajes : 0;
+      const puXTonelaje = precioUnitario;
+      const total = precioUnitario * totalCargaUnidad;
+
+      const fila: any = {
+        unidad: entry.placa,
+        semanas: {},
+        totalCarga: totalCargaUnidad,
+        nViajes,
+        tnCargaRuta: totalCargaUnidad,
+        totalRuta: total,
+        promedio,
+        puXTonelaje,
+        total,
+      };
+
+      for (const sem of semanas) {
+        const val = entry.semanaTn[sem] || 0;
+        fila.semanas[sem] = val;
+        totalSemanas[sem] += val;
+      }
+
+      totalViajes += nViajes;
+      totalTnCarga += totalCargaUnidad;
+      totalImporte += total;
+
+      filas.push(fila);
+    }
+
+    // Ordenar por totalCarga descendente
+    filas.sort((a, b) => b.totalCarga - a.totalCarga);
+
+    return {
+      mes,
+      semanas,
+      rutaLabel,
+      precioUnitario,
+      divisa,
+      filas,
+      totales: {
+        semanas: totalSemanas,
+        totalCarga: totalTnCarga,
+        nViajes: totalViajes,
+        tnCargaRuta: totalTnCarga,
+        totalRuta: totalImporte,
+        total: totalImporte,
+      },
+    };
+  }
+
+  // =====================================================
+  // REPORTE DE GUÍAS EMITIDAS POR EMPRESA DE TRANSPORTE
+  // =====================================================
+
+  /**
+   * Opciones para el reporte de guías: empresas disponibles y meses
+   */
+  async getReporteGuiasOpciones(): Promise<any> {
+    const empresas = await this.empresaRepository.find({
+      where: { estado: 'activo' },
+      order: { id: 'ASC' },
+    });
+
+    const mesesRaw = await this.createDocQuery()
+      .select('DISTINCT doc.mes', 'mes')
+      .orderBy('doc.mes', 'ASC')
+      .getRawMany();
+    const meses = mesesRaw.map(r => r.mes).filter(Boolean);
+
+    return {
+      empresas: empresas.map(e => ({ id: e.id, nombre: e.nombre })),
+      meses,
+    };
+  }
+
+  /**
+   * Reporte detallado de guías emitidas para una empresa de transporte en un mes.
+   * Agrupa por placa (unidad) y sub-agrupa por semana.
+   */
+  async getReporteGuias(empresaNombre: string, mes: string): Promise<any> {
+    // Obtener las placas de la empresa
+    const empresa = await this.empresaRepository.findOne({
+      where: { nombre: empresaNombre, estado: 'activo' },
+    });
+    if (!empresa) return { error: 'Empresa no encontrada' };
+
+    const unidades = await this.unidadRepository.find({
+      where: { empresaId: empresa.id, estado: 'activo' },
+      order: { placa: 'ASC' },
+    });
+    const placas = unidades.map(u => u.placa);
+
+    if (placas.length === 0) return { error: 'No hay unidades activas para esta empresa' };
+
+    // Obtener documentos del mes para esas placas
+    const qb = this.createDocQuery()
+      .andWhere('doc.mes = :mes', { mes })
+      .andWhere('doc.unidad IN (:...placas)', { placas })
+      .orderBy('doc.fecha', 'ASC')
+      .addOrderBy('doc.id', 'ASC');
+
+    const docs = await qb.getMany();
+
+    // Agrupar por placa
+    const placaGroups = new Map<string, any[]>();
+    for (const placa of placas) {
+      placaGroups.set(placa, []);
+    }
+    for (const doc of docs) {
+      const placa = (doc.unidad || '').trim();
+      if (placaGroups.has(placa)) {
+        placaGroups.get(placa)!.push(doc);
+      }
+    }
+
+    // Construir bloques por placa
+    const bloques: any[] = [];
+    let totalGeneralTn = 0;
+    let totalDolares = 0;
+    let totalSoles = 0;
+
+    for (const [placa, placaDocs] of placaGroups) {
+      if (placaDocs.length === 0) continue;
+
+      // Sub-agrupar por semana
+      const semanasMap = new Map<string, any[]>();
+      for (const doc of placaDocs) {
+        const sem = doc.semana || 'Sin semana';
+        if (!semanasMap.has(sem)) semanasMap.set(sem, []);
+        semanasMap.get(sem)!.push(doc);
+      }
+
+      const semanas: any[] = [];
+      let placaTotalTn = 0;
+      let placaDolares = 0;
+      let placaSoles = 0;
+
+      for (const [semana, semDocs] of semanasMap) {
+        let semanaTn = 0;
+        const viajes = semDocs.map(doc => {
+          const tnRecibida = Number(doc.tn_recibida) || 0;
+          const tnEnviado = Number(doc.tn_enviado) || 0;
+          const precioUnit = Number(doc.precio_unitario) || 0;
+          const bi = precioUnit * tnRecibida;
+          const importeTotal = bi * 1.18;
+          const div = (doc.divisa || 'USD').toUpperCase();
+
+          semanaTn += tnRecibida;
+
+          if (div.includes('PEN') || div.includes('SOL')) {
+            placaSoles += importeTotal;
+          } else {
+            placaDolares += importeTotal;
+          }
+
+          return {
+            fecha: doc.fecha,
+            grt: doc.grt || '',
+            conductor: doc.transportista || '',
+            placa: doc.unidad || '',
+            peso: tnEnviado,
+            pesoMina: tnRecibida,
+            ticket: doc.ticket || '',
+            grr: doc.grr || '',
+            cliente: doc.cliente || '',
+            recorrido: `${(doc.partida || '').split('-').pop()?.trim() || ''}-${(doc.llegada || '').split('-').pop()?.trim() || ''}`,
+            material: doc.transportado || '',
+            precio: precioUnit,
+            divisa: div,
+            bi,
+            importeTotal,
+          };
+        });
+
+        placaTotalTn += semanaTn;
+        semanas.push({ semana, viajes, totalTn: semanaTn });
+      }
+
+      totalGeneralTn += placaTotalTn;
+      totalDolares += placaDolares;
+      totalSoles += placaSoles;
+
+      bloques.push({
+        placa,
+        semanas,
+        totalTn: placaTotalTn,
+        totalDolares: placaDolares,
+        totalSoles: placaSoles,
+      });
+    }
+
+    return {
+      empresa: empresa.nombre,
+      mes,
+      bloques,
+      totalesGenerales: {
+        totalTn: totalGeneralTn,
+        totalDolares,
+        totalSoles,
+      },
     };
   }
 }
