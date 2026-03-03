@@ -31,7 +31,7 @@ export class DocumentsService {
     filePath: string,
   ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null; }> {
     try {
-      // Enviar Buffer directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
+      // Enviar Buffer ----- directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
 
       // Verificar si el documento fue rechazado por no ser válido
