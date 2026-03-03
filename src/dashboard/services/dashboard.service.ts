@@ -786,6 +786,8 @@ export class DashboardService {
    * Excluye transportista = 'DADO DE BAJA'
    */
   async getDiasConViajes(filters: DashboardFilters): Promise<any[]> {
+    console.log('[getDiasConViajes] Filtros recibidos:', JSON.stringify(filters));
+
     const queryBuilder = this.createDocQuery()
       .select('doc.fecha', 'fecha')
       .addSelect('COUNT(*)', 'traslados')
@@ -796,10 +798,30 @@ export class DashboardService {
     if (filters.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
 
-    return await queryBuilder
+    const result = await queryBuilder
       .groupBy('doc.fecha')
       .orderBy('doc.fecha', 'DESC')
       .getRawMany();
+
+    console.log(`[getDiasConViajes] Total filas retornadas: ${result.length}`);
+    if (result.length > 0) {
+      console.log('[getDiasConViajes] Primeras 3 filas (raw):', JSON.stringify(result.slice(0, 3)));
+      console.log('[getDiasConViajes] Tipos de datos fila[0]:', {
+        fecha: typeof result[0].fecha,
+        fechaVal: result[0].fecha,
+        traslados: typeof result[0].traslados,
+        trasladosVal: result[0].traslados,
+        tonelaje_recibido: typeof result[0].tonelaje_recibido,
+        tonelajeVal: result[0].tonelaje_recibido,
+      });
+    } else {
+      console.log('[getDiasConViajes] Sin resultados. Filtros activos:', {
+        cliente: filters.cliente || 'ninguno',
+        unidad: filters.unidad || 'ninguna',
+      });
+    }
+
+    return result;
   }
 
   /**

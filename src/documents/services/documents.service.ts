@@ -29,9 +29,9 @@ export class DocumentsService {
     fileName: string,
     userId: number,
     filePath: string,
-  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null; }> {
+  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null; }> {
     try {
-      // Enviar Buffer directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
+      // Enviar Buffer ----- directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
 
       // Verificar si el documento fue rechazado por no ser válido
@@ -54,8 +54,10 @@ export class DocumentsService {
         ...aiResponse.data,
       };
 
+      // Array para acumular razones de campos incompletos
+      const motivoArray: string[] = [];
+
       // Normalizar fecha: convertir de DD/MM/YYYY a YYYY-MM-DD si es necesario
-      // OpenAI a veces devuelve el formato peruano (DD/MM/YYYY) en vez de ISO (YYYY-MM-DD)
       if (documentData.fecha && typeof documentData.fecha === 'string') {
         const ddmmyyyy = (documentData.fecha as string).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
         if (ddmmyyyy) {
@@ -84,11 +86,26 @@ export class DocumentsService {
       console.log('Empresa:', documentData.empresa);
       console.log('TN Recibida:', documentData.tn_recibida);
 
+      // Detectar campos críticos faltantes y registrar motivo
+      if (!documentData.grt) motivoArray.push('GRT no identificado en el PDF');
+      if (!documentData.cliente) motivoArray.push('Cliente no identificado en el PDF');
+      if (!documentData.partida) motivoArray.push('Punto de partida no identificado');
+      if (!documentData.llegada) motivoArray.push('Punto de llegada no identificado');
+      if (!documentData.transportado) motivoArray.push('Material transportado no reconocido');
+      if (!documentData.tn_enviado) motivoArray.push('Tonelaje enviado no encontrado');
+
       // Normalizar nombre de transportista contra existentes en BD
       await this.normalizeTransportistaNombre(documentData);
 
       // Calcular campos financieros basados en tarifario
       const tarifaEncontrada = await this.calculateFinancialFields(documentData);
+
+      if (!tarifaEncontrada) {
+        const clienteStr = documentData.cliente || 'desconocido';
+        const rutaStr = `${documentData.partida || '?'} → ${documentData.llegada || '?'}`;
+        const materialStr = documentData.transportado || 'sin material';
+        motivoArray.push(`Tarifa no encontrada: cliente=[${clienteStr}] ruta=[${rutaStr}] material=[${materialStr}]`);
+      }
 
       // Validar y normalizar placa del vehículo
       await this.normalizeUnidad(documentData);
@@ -102,7 +119,16 @@ export class DocumentsService {
         const unidadExiste = await this.unidadService.findByPlaca(documentData.unidad);
         if (!unidadExiste) {
           placaNoRegistrada = documentData.unidad;
+          motivoArray.push(`Placa [${documentData.unidad}] no registrada en la base de datos`);
         }
+      } else {
+        motivoArray.push('Placa del vehículo no identificada');
+      }
+
+      // Asignar motivo acumulado (null si todo salió bien)
+      documentData.motivo = motivoArray.length > 0 ? motivoArray.join(' | ') : null;
+      if (documentData.motivo) {
+        console.log('=== MOTIVO REGISTRADO ===', documentData.motivo);
       }
 
       // Log para debugging
@@ -117,7 +143,6 @@ export class DocumentsService {
       console.log('=====================================');
 
       // Guardar en BD — siempre intentar guardar aunque falten campos
-      // Los campos no encontrados quedan en null (permitido por la entidad)
       let savedDocument: DocumentEntity | null = null;
       try {
         const doc = this.documentsRepository.create(documentData);
@@ -125,6 +150,7 @@ export class DocumentsService {
       } catch (saveErr: any) {
         console.error('=== ERROR AL GUARDAR EN BD ===');
         console.error('Mensaje:', saveErr?.message);
+        motivoArray.push(`Error técnico al guardar: ${saveErr?.message}`);
         // Último intento: guardar solo los campos mínimos seguros
         console.warn('Intentando guardar con campos mínimos...');
         const minimalDoc = this.documentsRepository.create({
@@ -143,6 +169,7 @@ export class DocumentsService {
           mes: documentData.mes || null,
           semana: documentData.semana || null,
           grr: documentData.grr || null,
+          motivo: motivoArray.join(' | '),
         });
         savedDocument = await this.documentsRepository.save(minimalDoc) as DocumentEntity;
         console.warn('✓ Documento guardado con campos mínimos, id=', savedDocument.id);
@@ -160,14 +187,16 @@ export class DocumentsService {
 
       const finalDoc = Array.isArray(savedDocument) ? savedDocument[0] : savedDocument;
 
-      // Detectar si no se encontró tarifa
-      let tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null = null;
-      if (!tarifaEncontrada && documentData.cliente && documentData.partida) {
+      // Detectar si no se encontró tarifa.
+      // Se dispara aunque cliente/partida sean null para que el wizard del front
+      // permita completar los datos faltantes en el momento.
+      let tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null = null;
+      if (!tarifaEncontrada) {
         tarifaNoEncontrada = {
-          cliente: documentData.cliente || '',
-          partida: documentData.partida || '',
-          llegada: documentData.llegada || '',
-          transportado: documentData.transportado || '',
+          cliente: documentData.cliente || null,
+          partida: documentData.partida || null,
+          llegada: documentData.llegada || null,
+          transportado: documentData.transportado || null,
         };
       }
 

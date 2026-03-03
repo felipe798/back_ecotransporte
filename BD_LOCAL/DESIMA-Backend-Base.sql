@@ -241,9 +241,9 @@ SELECT setval('unidad_id_seq', (SELECT MAX(id) FROM unidad));
 -- =============================================
 SELECT setval('documents_id_seq', 1);
 
--- =============================================
+-- ================================================
 -- TABLA: client_tariff (Tarifas por Cliente)
--- =============================================
+-- ================================================
 -- La tabla ya existe, no se crea de nuevo.
 -- CREATE TABLE IF NOT EXISTS client_tariff (
 --     id                   SERIAL PRIMARY KEY,
