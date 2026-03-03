@@ -29,7 +29,7 @@ export class DocumentsService {
     fileName: string,
     userId: number,
     filePath: string,
-  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null; }> {
+  ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null; }> {
     try {
       // Enviar Buffer directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
@@ -187,14 +187,16 @@ export class DocumentsService {
 
       const finalDoc = Array.isArray(savedDocument) ? savedDocument[0] : savedDocument;
 
-      // Detectar si no se encontró tarifa
-      let tarifaNoEncontrada: { cliente: string; partida: string; llegada: string; transportado: string } | null = null;
-      if (!tarifaEncontrada && documentData.cliente && documentData.partida) {
+      // Detectar si no se encontró tarifa.
+      // Se dispara aunque cliente/partida sean null para que el wizard del front
+      // permita completar los datos faltantes en el momento.
+      let tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null = null;
+      if (!tarifaEncontrada) {
         tarifaNoEncontrada = {
-          cliente: documentData.cliente || '',
-          partida: documentData.partida || '',
-          llegada: documentData.llegada || '',
-          transportado: documentData.transportado || '',
+          cliente: documentData.cliente || null,
+          partida: documentData.partida || null,
+          llegada: documentData.llegada || null,
+          transportado: documentData.transportado || null,
         };
       }
 
