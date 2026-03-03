@@ -261,7 +261,7 @@ SELECT setval('documents_id_seq', 1);
 
 -- Tarifas de clientes
 INSERT INTO client_tariff (cliente, partida, llegada, material, "precioVentaSinIgv", "precioVentaConIgv", moneda, "precioCostoSinIgv", "precioCostoConIgv", divisa) VALUES
-    ('PALTARUMI S.A.C.',                  'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
+    ('PALTARUMI S.A.C.',                  'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'LOTE MINERAL',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),
     ('ECO GOLD S.A.C.',                   'LIMA-BARRANCA-PARAMONGA',         'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE AU',            23.00,        27.14,        'USD',   20.50,       24.19,        'USD'),
     ('ECO GOLD S.A.C.',                   'LA LIBERTAD-TRUJILLO-HUANCHACO',  'CALLAO-CALLAO-VENTANILLA',         'CONCENTRADO DE PLATA A GRANEL',44.00,        51.92,        'USD',   39.50,       46.61,        'USD'),
     ('ECO GOLD S.A.C.',                   'LA LIBERTAD-TRUJILLO-HUANCHACO',  'LIMA-BARRANCA-PARAMONGA',          'MINERAL AURIFERO',             21.00,        24.78,        'USD',   19.00,       22.42,        'USD'),

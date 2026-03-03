@@ -331,30 +331,6 @@ export class DashboardController {
   }
 
   /**
-   * Opciones para la tabla de unidades: meses, semanas del mes, filas seleccionables
-   */
-  @Get('tabla-unidades-opciones')
-  async getTablaUnidadesOpciones(@Query('mes') mes?: string) {
-    return await this.dashboardService.getTablaUnidadesOpciones(mes);
-  }
-
-  /**
-   * Tabla de unidades desglosada por semana para una tarifa específica
-   */
-  @Get('tabla-unidades')
-  async getTablaUnidades(
-    @Query('mes') mes: string,
-    @Query('semanaInicio') semanaInicio: string,
-    @Query('semanaFin') semanaFin: string,
-    @Query('tarifaKey') tarifaKey: string,
-  ) {
-    if (!mes || !semanaInicio || !semanaFin || !tarifaKey) {
-      return { error: 'Parámetros obligatorios: mes, semanaInicio, semanaFin, tarifaKey' };
-    }
-    return await this.dashboardService.getTablaUnidades(mes, semanaInicio, semanaFin, tarifaKey);
-  }
-
-  /**
    * Opciones para el reporte de guías: empresas y meses disponibles
    */
   @Get('reporte-guias-opciones')
