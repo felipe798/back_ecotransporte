@@ -926,7 +926,25 @@ export class DocumentsService {
     }
 
     await this.documentsRepository.update(id, updateData);
-    return await this.getDocumentById(id);
+
+    // Limpieza automática del motivo: si todos los campos críticos ya están
+    // completos tras esta edición, se borra el motivo automáticamente.
+    const updatedDoc = await this.getDocumentById(id);
+    if (
+      updatedDoc &&
+      updatedDoc.motivo &&
+      updatedDoc.cliente &&
+      updatedDoc.partida &&
+      updatedDoc.llegada &&
+      updatedDoc.transportado &&
+      updatedDoc.precio_unitario
+    ) {
+      await this.documentsRepository.update(id, { motivo: null });
+      console.log(`✅ motivo limpiado automáticamente para doc ${id}: todos los campos críticos completos`);
+      return await this.getDocumentById(id);
+    }
+
+    return updatedDoc;
   }
 
   async toggleAnulado(id: number): Promise<DocumentEntity | null> {
