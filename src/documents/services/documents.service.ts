@@ -212,11 +212,17 @@ export class DocumentsService {
    * - En cualquier otro caso → "LOGIMINSA"
    */
   private determineDeposito(documentData: Partial<DocumentEntity>): void {
-    const llegada = (documentData.llegada || '').toUpperCase();
-    if (llegada.includes('CALLAO')) {
+    const llegada = (documentData.llegada || '').toUpperCase().trim();
+
+    if (llegada.includes('CALLAO') && llegada.includes('VENTANILLA')) {
+      // CALLAO-CALLAO-VENTANILLA → LOGIMINSA
+      documentData.deposito = 'LOGIMINSA';
+    } else if (llegada.includes('CALLAO')) {
+      // CALLAO-CALLAO-CALLAO o CALLAO-CALLAO-CALLAO (IMPALA) → IMPALA
       documentData.deposito = 'IMPALA';
     } else {
-      documentData.deposito = 'LOGIMINSA';
+      // Cualquier otra llegada → CONCESION
+      documentData.deposito = 'CONCESION';
     }
     console.log(`Depósito determinado: ${documentData.deposito} (llegada: ${documentData.llegada})`);
   }
@@ -408,6 +414,12 @@ export class DocumentsService {
       const normalizedCliente = this.findBestMatch(cliente, uniqueValues.clientes);
       if (normalizedCliente) {
         documentData.cliente = normalizedCliente;
+      } else {
+        // El nombre del PDF no coincide con ningún cliente conocido del tarifario.
+        // Se guarda null para que el usuario lo asigne manualmente desde la edición,
+        // evitando que se almacene un nombre incorrecto o inventado.
+        console.log(`  ⚠️ Cliente "${cliente}" no coincide con ninguno del tarifario → null`);
+        documentData.cliente = null;
       }
     }
 
