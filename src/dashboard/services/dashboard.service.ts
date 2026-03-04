@@ -149,12 +149,11 @@ export class DashboardService {
   }
 
   /**
-   * Lista de guías por verificar (tn_recibida = tn_enviado Y sin documentos adjuntos)
+   * Lista de guías por verificar (tn_recibida = tn_enviado)
    */
   async getGuiasPorVerificarList(filters?: DashboardFilters): Promise<any[]> {
     const queryBuilder = this.createDocQuery()
-      .andWhere('doc.tn_recibida = doc.tn_enviado')
-      .andWhere('(doc.documentos IS NULL OR array_length(doc.documentos, 1) IS NULL)');
+      .andWhere('doc.tn_recibida = doc.tn_enviado');
 
     if (filters?.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
     if (filters?.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
@@ -167,13 +166,12 @@ export class DashboardService {
   }
 
   /**
-   * Guías por verificar (tn_recibida = tn_enviado Y sin documentos adjuntos)
+   * Guías por verificar (tn_recibida = tn_enviado)
    */
   async getGuiasPorVerificar(filters?: DashboardFilters): Promise<number> {
     const queryBuilder = this.createDocQuery()
       .select('COUNT(*)', 'count')
-      .andWhere('doc.tn_recibida = doc.tn_enviado')
-      .andWhere('(doc.documentos IS NULL OR array_length(doc.documentos, 1) IS NULL)');
+      .andWhere('doc.tn_recibida = doc.tn_enviado');
     
     if (filters?.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
     if (filters?.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
@@ -1083,16 +1081,20 @@ export class DashboardService {
           const pcosto = Number(doc.pcosto) || 0;
           matDivisa = (doc.divisa || 'USD').toUpperCase().includes('PEN') ? 'PEN' : 'USD';
 
+          // Si la empresa del documento es ECOTRANSPORTE, el costo es 0 (empresa propia)
+          const docEmpresaName = getDocEmpresa(doc);
+          const esEcotransporte = docEmpresaName.toUpperCase().trim().includes('ECOTRANSPORTE');
+          const costoEfectivo = esEcotransporte ? 0 : pcosto * tnRecibida;
+
           data.general.tne += tnRecibida;
           data.general.importeVenta += precioUnit * tnRecibida;
-          data.general.importeCosto += pcosto * tnRecibida;
+          data.general.importeCosto += costoEfectivo;
 
-          const docEmpresaName = getDocEmpresa(doc);
           for (const emp of empresasColumna) {
             if (emp.toUpperCase().trim() === docEmpresaName.toUpperCase().trim()) {
               data[emp].tne += tnRecibida;
               data[emp].importeVenta += precioUnit * tnRecibida;
-              data[emp].importeCosto += pcosto * tnRecibida;
+              data[emp].importeCosto += costoEfectivo;
             }
           }
         }
@@ -1128,21 +1130,21 @@ export class DashboardService {
       }
     }
 
-    // 7. Margen de ganancia
+    // 7. Margen de ganancia por empresa
     const margen = {
-      USD: {
-        importeVenta: totales.USD.general.importeVenta,
-        importeCosto: totales.USD.general.importeCosto,
-        margen: totales.USD.general.importeVenta - totales.USD.general.importeCosto,
-      },
-      PEN: {
-        importeVenta: totales.PEN.general.importeVenta,
-        importeCosto: totales.PEN.general.importeCosto,
-        margen: totales.PEN.general.importeVenta - totales.PEN.general.importeCosto,
-      },
-      total: (totales.USD.general.importeVenta - totales.USD.general.importeCosto)
-           + (totales.PEN.general.importeVenta - totales.PEN.general.importeCosto),
+      USD: { general: { margen: totales.USD.general.importeVenta - totales.USD.general.importeCosto } } as any,
+      PEN: { general: { margen: totales.PEN.general.importeVenta - totales.PEN.general.importeCosto } } as any,
+      total: { general: (totales.USD.general.importeVenta - totales.USD.general.importeCosto)
+                      + (totales.PEN.general.importeVenta - totales.PEN.general.importeCosto) } as any,
     };
+    for (const emp of empresasColumna) {
+      const usdEmp = totales.USD[emp] || { importeVenta: 0, importeCosto: 0 };
+      const penEmp = totales.PEN[emp] || { importeVenta: 0, importeCosto: 0 };
+      margen.USD[emp] = { margen: usdEmp.importeVenta - usdEmp.importeCosto };
+      margen.PEN[emp] = { margen: penEmp.importeVenta - penEmp.importeCosto };
+      margen.total[emp] = (usdEmp.importeVenta - usdEmp.importeCosto)
+                        + (penEmp.importeVenta - penEmp.importeCosto);
+    }
 
     return {
       mes,
