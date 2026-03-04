@@ -173,9 +173,17 @@ export class OpenAIService {
     const unidadMatch = pdfText.match(/VEH[IÍ]CULO PRINCIPAL\s*:\s*([A-Z0-9]{2,3}-?[A-Z0-9]{3,4})(?:\b|\s)/i);
     if (unidadMatch) result.unidad = unidadMatch[1].replace(/-/g, '').trim();
 
-    // TN_ENVIADO — "PESO BRUTO TOTAL (TNE):"
-    const tnMatch = pdfText.match(/PESO BRUTO TOTAL\s*\(TNE\)\s*:\s*([\d.]+)/i);
-    if (tnMatch) result.tn_enviado = parseFloat(tnMatch[1]);
+    // TN_ENVIADO — columna CANTIDAD de la tabla donde U/M = "TNE"
+    // pdf-parse puede extraer la tabla en una sola línea o cada celda en línea separada.
+    // Estrategia 1: fila completa en una línea → "...TNE 34.560"
+    // Estrategia 2: celdas separadas → "TNE\n34.560" o "TNE\r\n34.560"
+    // Estrategia 3: "TNE\t34.560"
+    // Usamos un patrón flexible que cubre los 3 casos:
+    const tnMatch = pdfText.match(/\bTNE[\s\t\r\n]+([\d.,]+)/i);
+    if (tnMatch) {
+      const raw = tnMatch[1].replace(',', '.');
+      result.tn_enviado = Math.round(parseFloat(raw) * 100) / 100;
+    }
 
     // CLIENTE — primera aparición de "DENOMINACIÓN:" (sección REMITENTE)
     const denominacionMatch = pdfText.match(/DENOMINACI[OÓ]N\s*:\s*(.+)/i);
@@ -306,9 +314,9 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Si tiene guión (ej: BEA-768), quítalo y devuelve BEA768. Solo la placa, nada más.
   NO confundir con el TUC que es un código largo (ej: 15M21034987E).
 
-- tn_enviado: Busca la línea que contiene "PESO BRUTO TOTAL (TNE):". Extrae ÚNICAMENTE el número decimal que aparece después de los dos puntos.
-  Ejemplo: "PESO BRUTO TOTAL (TNE):34.0" → extraes: 34.0
-  Cópialo exactamente, sin añadir ni quitar decimales.
+- tn_enviado: Busca la tabla del documento que tiene las columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD". En la fila de esa tabla donde la columna U/M sea "TNE", extrae ÚNICAMENTE el número que aparece en la columna CANTIDAD (el último número de esa fila).
+  Ejemplo de fila: "1 2001 POR CONCENTRADO DE ZINC - GRANEL / CLASE: 09 UN: 3077 TNE 34.560" → extraes: 34.56
+  Redondea siempre a exactamente 2 decimales. Si hay varias filas con U/M TNE, usa la primera.
 
 - grr: Busca la línea que contiene "GUÍA DE REMISIÓN REMITENTE" y extrae ÚNICAMENTE el código alfanumérico al final (empieza con EG o GR).
   Ejemplo: "GUÍA DE REMISIÓN REMITENTE EG07-5784" → extraes: "EG07-5784"
