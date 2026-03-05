@@ -42,6 +42,7 @@ export class DocumentsService {
 
       // Enviar Buffer ----- directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
       const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer, materialesCatalogo);
+      const pdfText: string = aiResponse.pdfText || '';
 
       // Verificar si el documento fue rechazado por no ser válido
       if (aiResponse.rejected) {
@@ -81,7 +82,7 @@ export class DocumentsService {
       }
 
       // Normalizar campos de ubicación comparando con el tarifario
-      await this.normalizeLocationFields(documentData);
+      await this.normalizeLocationFields(documentData, pdfText);
 
       // Determinar depósito según regla de negocio (basado en punto de llegada)
       this.determineDeposito(documentData);
@@ -399,7 +400,7 @@ export class DocumentsService {
    * Normaliza los campos cliente, partida, llegada y transportado (material)
    * comparándolos con los valores del tarifario y ajustando al más parecido
    */
-  private async normalizeLocationFields(documentData: Partial<DocumentEntity>): Promise<void> {
+  private async normalizeLocationFields(documentData: Partial<DocumentEntity>, pdfText: string = ''): Promise<void> {
     const { cliente, partida, llegada, transportado, empresa } = documentData;
 
     // Obtener valores únicos del tarifario
@@ -499,6 +500,7 @@ export class DocumentsService {
 
     // Fallback del único candidato: si transportado quedó null pero el contexto
     // cliente+partida tiene exactamente 1 material en el tarifario, asignarlo automáticamente.
+    // Si hay múltiples candidatos, intentar matchear contra el texto crudo del PDF.
     if (!documentData.transportado) {
       const ctxCliente = documentData.cliente;
       const ctxPartida = documentData.partida;
@@ -511,8 +513,17 @@ export class DocumentsService {
           if (contextMaterials.length === 1) {
             documentData.transportado = contextMaterials[0];
             console.log(`  ✓ Material asignado por único candidato en ruta: "${contextMaterials[0]}"`);
+          } else if (contextMaterials.length > 1 && pdfText) {
+            // Múltiples candidatos: intentar match directo contra el texto crudo del PDF
+            const matchFromPdf = this.findMaterialMatch(pdfText, contextMaterials);
+            if (matchFromPdf) {
+              documentData.transportado = matchFromPdf;
+              console.log(`  ✓ Material encontrado en texto PDF crudo: "${matchFromPdf}"`);
+            } else {
+              console.log(`  ⚠️ Múltiples materiales en ruta (${contextMaterials.join(', ')}), no se encontró en texto PDF → null`);
+            }
           } else if (contextMaterials.length > 1) {
-            console.log(`  ⚠️ Múltiples materiales en ruta (${contextMaterials.join(', ')}), no se puede asignar automáticamente → null`);
+            console.log(`  ⚠️ Múltiples materiales en ruta (${contextMaterials.join(', ')}), no hay texto PDF disponible → null`);
           }
         } catch (e) {
           console.log('  Error al obtener tarifas para fallback único candidato:', e?.message);

@@ -568,6 +568,7 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
         success: true,
         data: extractedData,
         rawResponse: content,
+        pdfText,
       };
     } catch (error) {
       console.error('=== OPENAI SERVICE ERROR FINAL ===');
