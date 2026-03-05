@@ -568,11 +568,12 @@ export class DocumentsService {
     }
 
     const normalizedInput = this.normalizeStringAggressive(input);
+    const inputWords = normalizedInput.split(/\s+/).filter(w => w.length > 0);
 
     // Ordenar de más largo a más corto para que el más específico gane
     const sortedMaterials = [...materials].sort((a, b) => b.length - a.length);
 
-    // Buscar si algún material está contenido en el input (más largo primero)
+    // Paso 1: Buscar si algún material está contenido en el input (más largo primero)
     for (const material of sortedMaterials) {
       const normalizedMaterial = this.normalizeStringAggressive(material);
       if (normalizedMaterial && normalizedInput.includes(normalizedMaterial)) {
@@ -581,9 +582,40 @@ export class DocumentsService {
       }
     }
 
-    // Si no encontró match por contenido, usar similitud
-    console.log(`  Buscando material por similitud...`);
-    return this.findBestMatch(input, materials);
+    // Paso 2: Verificación por palabras exactas
+    // TODAS las palabras del candidato deben estar en el input Y viceversa.
+    // Esto evita que "CONCENTRADO DE ORO" matchee "CONCENTRADO DE PLOMO"
+    // porque "PLOMO" no existe en las palabras del input.
+    console.log(`  Buscando material por intersección de palabras...`);
+    for (const material of sortedMaterials) {
+      const candidateWords = this.normalizeStringAggressive(material)
+        .split(/\s+/).filter(w => w.length > 0);
+      if (candidateWords.length === 0) continue;
+
+      const allCandidateInInput = candidateWords.every(w => inputWords.includes(w));
+      const allInputInCandidate = inputWords.every(w => candidateWords.includes(w));
+
+      if (allCandidateInInput && allInputInCandidate) {
+        console.log(`  ✓ Material encontrado por palabras exactas: "${material}"`);
+        return material;
+      }
+    }
+
+    // Paso 3: Subset unidireccional — el candidato más corto es subconjunto del input
+    // Útil si el input tiene palabras extra ("CONCENTRADO DE ORO FINO" → "CONCENTRADO DE ORO")
+    for (const material of sortedMaterials) {
+      const candidateWords = this.normalizeStringAggressive(material)
+        .split(/\s+/).filter(w => w.length > 0);
+      if (candidateWords.length === 0) continue;
+      if (candidateWords.every(w => inputWords.includes(w))) {
+        console.log(`  ✓ Material encontrado por subset candidato⊆input: "${material}"`);
+        return material;
+      }
+    }
+
+    // Sin match seguro → null (no inventar material incorrecto)
+    console.log(`  ✗ No se encontró material seguro para: "${input}" → null`);
+    return null;
   }
 
   /**
