@@ -319,8 +319,11 @@ export class DocumentsService {
     if (bestScore >= 0.83 && bestMatch) {
       console.log(`  ✓ Placa normalizada por similitud (${(bestScore * 100).toFixed(0)}%): "${unidad}" → "${bestMatch}"`);
       documentData.unidad = bestMatch;
-    } else if (bestMatch) {
-      console.log(`  Placa nueva (mejor match: "${bestMatch}" ${(bestScore * 100).toFixed(0)}%)`);
+    } else {
+      // No se encontró match confiable (ya sea BD vacía o similitud insuficiente).
+      // Se guarda null para no asignar una placa incorrecta.
+      console.log(`  ✗ Placa "${unidad}" sin match confiable (mejor: "${bestMatch ?? 'ninguno'}" ${(bestScore * 100).toFixed(0)}%) → null`);
+      documentData.unidad = null;
     }
 
     console.log('=== FIN VALIDACIÓN PLACA ===\n');
@@ -441,15 +444,49 @@ export class DocumentsService {
       }
     }
 
-    // Normalizar transportado (material) - buscar si algún material del tarifario está contenido
+    // Normalizar transportado (material)
+    // Estrategia: primero filtrar candidatos por contexto (cliente+partida ya normalizados),
+    // así se evita confundir materiales distintos del mismo tipo (ej: varios CONCENTRADO).
+    // Si no hay coincidencia en el contexto, se busca en todos los materiales del tarifario.
     console.log('\n--- Normalizando MATERIAL ---');
     if (transportado) {
-      const normalizedMaterial = this.findMaterialMatch(transportado, uniqueValues.materiales);
+      let normalizedMaterial: string | null = null;
+
+      // Paso 1: candidatos filtrados por cliente + partida ya normalizados
+      const ctxCliente = documentData.cliente;
+      const ctxPartida = documentData.partida;
+      if (ctxCliente && ctxPartida) {
+        try {
+          const contextTarifas = await this.clientTariffService.findByClienteAndPartida(ctxCliente, ctxPartida);
+          const contextMaterials = contextTarifas
+            .map(t => t.material)
+            .filter(Boolean) as string[];
+          console.log(`  Candidatos por contexto (${ctxCliente} / ${ctxPartida}): [${contextMaterials.join(', ')}]`);
+          if (contextMaterials.length > 0) {
+            normalizedMaterial = this.findMaterialMatch(transportado, contextMaterials);
+            if (normalizedMaterial) {
+              console.log(`  ✓ Material resuelto por contexto de ruta: "${normalizedMaterial}"`);
+            }
+          }
+        } catch (e) {
+          console.log('  Error al obtener tarifas por contexto:', e?.message);
+        }
+      }
+
+      // Paso 2: fallback — buscar en todos los materiales del tarifario
+      if (!normalizedMaterial) {
+        console.log('  Fallback: buscando en todos los materiales del tarifario...');
+        normalizedMaterial = this.findMaterialMatch(transportado, uniqueValues.materiales);
+      }
+
       if (normalizedMaterial) {
         documentData.transportado = normalizedMaterial;
+      } else {
+        console.log(`  ⚠️ Material "${transportado}" no coincide con ninguno del tarifario → null`);
+        documentData.transportado = null;
       }
     }
-    
+
     console.log('=== FIN NORMALIZACIÓN ===\n');
   }
 
@@ -520,8 +557,10 @@ export class DocumentsService {
   }
 
   /**
-   * Busca si algún material del tarifario está contenido en el texto extraído
-   * Ej: "POR CONCENTRADO DE ZN UN 3077 CLASE 9..." contiene "CONCENTRADO DE ZN"
+   * Busca si algún material del tarifario está contenido en el texto extraído.
+   * Ordena los candidatos de MAYOR a MENOR longitud antes de comparar,
+   * para que nombres más específicos ("CONCENTRADO DE PLATA Y ORO") ganen
+   * sobre nombres más cortos ("CONCENTRADO DE ZN") cuando ambos están contenidos.
    */
   private findMaterialMatch(input: string, materials: string[]): string | null {
     if (!input || materials.length === 0) {
@@ -529,12 +568,15 @@ export class DocumentsService {
     }
 
     const normalizedInput = this.normalizeStringAggressive(input);
-    
-    // Primero buscar si algún material está contenido en el input
-    for (const material of materials) {
+
+    // Ordenar de más largo a más corto para que el más específico gane
+    const sortedMaterials = [...materials].sort((a, b) => b.length - a.length);
+
+    // Buscar si algún material está contenido en el input (más largo primero)
+    for (const material of sortedMaterials) {
       const normalizedMaterial = this.normalizeStringAggressive(material);
       if (normalizedMaterial && normalizedInput.includes(normalizedMaterial)) {
-        console.log(`  ✓ Material encontrado por contenido: "${material}" en "${input.substring(0, 50)}..."`);
+        console.log(`  ✓ Material encontrado por contenido: "${material}" en "${input.substring(0, 60)}"`);
         return material;
       }
     }
@@ -815,16 +857,16 @@ export class DocumentsService {
         partida: tarifa.partida,
         llegada: tarifa.llegada,
         material: tarifa.material,
-        precioVenta: tarifa.precioVentaSinIgv,
-        precioCosto: tarifa.precioCostoSinIgv,
+        precioVenta: tarifa.precioVentaConIgv,
+        precioCosto: tarifa.precioCostoConIgv,
       });
 
       // Asignar precio unitario y divisa desde tarifario
-      documentData.precio_unitario = Number(tarifa.precioVentaSinIgv) || null;
+      documentData.precio_unitario = Number(tarifa.precioVentaConIgv) || null;
       documentData.divisa = tarifa.moneda || null;
 
       // Asignar costo y divisa de costo desde tarifario
-      documentData.pcosto = Number(tarifa.precioCostoSinIgv) || null;
+      documentData.pcosto = Number(tarifa.precioCostoConIgv) || null;
       documentData.divisa_cost = tarifa.divisa || null;
 
       // Calcular precio final = precio_unitario * tn_recibida
