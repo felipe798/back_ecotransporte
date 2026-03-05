@@ -567,13 +567,21 @@ export class DocumentsService {
       return null;
     }
 
+    // normalizeStringAggressive quita espacios → útil para substring pero NO para split
+    // normalizarPalabras: lowercase + sin acentos + sin especiales PERO mantiene espacios
+    const normWords = (s: string) => s
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, ' ').trim();
+
     const normalizedInput = this.normalizeStringAggressive(input);
-    const inputWords = normalizedInput.split(/\s+/).filter(w => w.length > 0);
+    const inputWords = new Set(normWords(input).split(' ').filter(w => w.length > 1));
 
     // Ordenar de más largo a más corto para que el más específico gane
     const sortedMaterials = [...materials].sort((a, b) => b.length - a.length);
 
-    // Paso 1: Buscar si algún material está contenido en el input (más largo primero)
+    // Paso 1: Substring (agresivo, sin espacios) — más largo primero
     for (const material of sortedMaterials) {
       const normalizedMaterial = this.normalizeStringAggressive(material);
       if (normalizedMaterial && normalizedInput.includes(normalizedMaterial)) {
@@ -582,38 +590,31 @@ export class DocumentsService {
       }
     }
 
-    // Paso 2: Verificación por palabras exactas
-    // TODAS las palabras del candidato deben estar en el input Y viceversa.
-    // Esto evita que "CONCENTRADO DE ORO" matchee "CONCENTRADO DE PLOMO"
-    // porque "PLOMO" no existe en las palabras del input.
+    // Paso 2: Todas las palabras del candidato están en el input Y viceversa
+    // "CONCENTRADO DE ORO" vs "CONCENTRADO DE PLOMO" → "plomo" no está en inputWords → no match
     console.log(`  Buscando material por intersección de palabras...`);
     for (const material of sortedMaterials) {
-      const candidateWords = this.normalizeStringAggressive(material)
-        .split(/\s+/).filter(w => w.length > 0);
+      const candidateWords = normWords(material).split(' ').filter(w => w.length > 1);
       if (candidateWords.length === 0) continue;
-
-      const allCandidateInInput = candidateWords.every(w => inputWords.includes(w));
-      const allInputInCandidate = inputWords.every(w => candidateWords.includes(w));
-
+      const allCandidateInInput = candidateWords.every(w => inputWords.has(w));
+      const allInputInCandidate = [...inputWords].every(w => candidateWords.includes(w));
       if (allCandidateInInput && allInputInCandidate) {
         console.log(`  ✓ Material encontrado por palabras exactas: "${material}"`);
         return material;
       }
     }
 
-    // Paso 3: Subset unidireccional — el candidato más corto es subconjunto del input
-    // Útil si el input tiene palabras extra ("CONCENTRADO DE ORO FINO" → "CONCENTRADO DE ORO")
+    // Paso 3: Subset — todas las palabras del candidato están en el input (input puede tener extra)
     for (const material of sortedMaterials) {
-      const candidateWords = this.normalizeStringAggressive(material)
-        .split(/\s+/).filter(w => w.length > 0);
+      const candidateWords = normWords(material).split(' ').filter(w => w.length > 1);
       if (candidateWords.length === 0) continue;
-      if (candidateWords.every(w => inputWords.includes(w))) {
+      if (candidateWords.every(w => inputWords.has(w))) {
         console.log(`  ✓ Material encontrado por subset candidato⊆input: "${material}"`);
         return material;
       }
     }
 
-    // Sin match seguro → null (no inventar material incorrecto)
+    // Sin match seguro → null
     console.log(`  ✗ No se encontró material seguro para: "${input}" → null`);
     return null;
   }
