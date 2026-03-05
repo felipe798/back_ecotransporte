@@ -127,6 +127,11 @@ export class OpenAIService {
 
     let cleaned = material.trim().toUpperCase();
 
+    // Rechazar valores que sean referencias a lotes (no son materiales válidos)
+    if (/^LOTE[\s\-/]/i.test(cleaned) || cleaned === 'LOTE MINERAL' || cleaned === 'LOTE') {
+      return '';
+    }
+
     // Quitar prefijo "POR "
     cleaned = cleaned.replace(/^POR\s+/i, '');
 
@@ -344,12 +349,14 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Recuerda: SOLO los 3 primeros niveles geográficos (con sufijo entre paréntesis si lo hay), nada de direcciones.
 
 - transportado: Busca en la tabla del documento que tiene columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD".
-  Extrae ÚNICAMENTE el contenido de la columna DESCRIPCIÓN de esa tabla.
+  Extrae ÚNICAMENTE el contenido de la columna DESCRIPCIÓN de esa tabla (la fila con número 1, 2, etc.).
+  IGNORA completamente cualquier campo o sección que diga "LOTE", "N° LOTE", "LOTE MINERAL", "LOTE N°" u otras referencias a lotes — esos NO son el material transportado.
   Limpia el valor extraído: quita el prefijo "POR " si lo hay, quita códigos ONU ("UN 3077", "CLASE 9", "/ CLASE: 09"), quita lotes numéricos (ej: "0012-21416"), quita sufijos "- GRANEL" o "/ GRANEL" (pero mantén "A GRANEL" si es parte del nombre).
   El resultado debe ser solo el nombre del material. Ejemplos:
   "POR CONCENTRADO DE ZN UN 3077 CLASE 9 MISCELANEOS MATERIALES PELIGROSOS" → extraes: "CONCENTRADO DE ZN"
   "POR CONCENTRADO DE PLATA Y ORO - GRANEL / CLASE: 09 UN: 3077" → extraes: "CONCENTRADO DE PLATA Y ORO"
   "POR MINERAL AURIFERO" → extraes: "MINERAL AURIFERO"
+  "LOTE MINERAL" o "LOTE N° 123" → NO es válido, extrae el nombre real de la columna DESCRIPCIÓN
 
 === CAMPOS QUE SIEMPRE VAN NULL (no busques estos en el documento) ===
 - empresa: null (se determina automáticamente desde la base de datos según la placa)
@@ -476,7 +483,8 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
 
       // Normalizar material/transportado: limpiar prefijos, códigos de lote, clases ONU
       if (extractedData.transportado) {
-        extractedData.transportado = this.normalizeMaterial(extractedData.transportado);
+        const normalized = this.normalizeMaterial(extractedData.transportado);
+        extractedData.transportado = normalized || null;
       }
 
       // Normalizar semana: quitar ceros a la izquierda ("01" → "1")
