@@ -127,11 +127,6 @@ export class OpenAIService {
 
     let cleaned = material.trim().toUpperCase();
 
-    // Rechazar valores que sean referencias a lotes (no son materiales válidos)
-    if (/^LOTE[\s\-/]/i.test(cleaned) || cleaned === 'LOTE MINERAL' || cleaned === 'LOTE') {
-      return '';
-    }
-
     // Quitar prefijo "POR "
     cleaned = cleaned.replace(/^POR\s+/i, '');
 
@@ -274,7 +269,7 @@ export class OpenAIService {
     return validated;
   }
 
-  async extractDocumentData(pdfBuffer: Buffer): Promise<any> {
+  async extractDocumentData(pdfBuffer: Buffer, materiales: string[] = []): Promise<any> {
     try {
       console.log('=== EXTRACT DOCUMENT DATA - INICIO ===');
       console.log('Buffer recibido:', !!pdfBuffer, '- tamaño:', pdfBuffer?.length, 'bytes');
@@ -350,9 +345,17 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
 
 - transportado: Busca en la tabla del documento que tiene columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD".
   Extrae ÚNICAMENTE el contenido de la columna DESCRIPCIÓN de esa tabla (la fila con número 1, 2, etc.).
-  IGNORA completamente cualquier campo o sección que diga "LOTE", "N° LOTE", "LOTE MINERAL", "LOTE N°" u otras referencias a lotes — esos NO son el material transportado.
-  Limpia el valor extraído: quita el prefijo "POR " si lo hay, quita códigos ONU ("UN 3077", "CLASE 9", "/ CLASE: 09"), quita lotes numéricos (ej: "0012-21416"), quita sufijos "- GRANEL" o "/ GRANEL" (pero mantén "A GRANEL" si es parte del nombre).
-  El resultado debe ser solo el nombre del material. Ejemplos:
+  Limpia el valor extraído: quita el prefijo "POR " si lo hay, quita códigos ONU ("UN 3077", "CLASE 9", "/ CLASE: 09"), quita lotes numéricos tipo "0012-21416" (secuencias de dígitos con guión), quita sufijos "- GRANEL" o "/ GRANEL" (pero mantén "A GRANEL" si es parte del nombre).
+  Si la columna DESCRIPCIÓN dice literalmente "LOTE MINERAL" u otro texto con "LOTE", extráelo tal cual — puede ser un nombre de material válido.
+${materiales.length > 0 ? `  IMPORTANTE: Una vez extraido el nombre del material, compáralo semánticamente con esta lista del catálogo registrado y devuelve EXACTAMENTE el valor más adecuado de la lista (copia textual), o null si ningúno corresponde:
+  ${materiales.map(m => `"${m}"`).join(', ')}
+  Ejemplos de matching semántico:
+  - "CONCENTRADO DE ZN UN 3077" → si existe "CONCENTRADO DE ZN" en la lista → devuelves: "CONCENTRADO DE ZN"
+  - "MINERAL AURIFERO" → si existe "MINERAL AURIFERO" → devuelves: "MINERAL AURIFERO"
+  - "CONCENTRADO DE ORO" → si existe "CONCENTRADO DE AU" → devuelves: "CONCENTRADO DE AU" (AU = ORO en tabla periódica)
+  - "LOTE MINERAL" o cualquier referencia de lote → devuelves: null
+  - Si el material no tiene equivalente claro en la lista → devuelves: null` : `  El resultado debe ser solo el nombre del material.`}  
+  Ejemplos de extracción:
   "POR CONCENTRADO DE ZN UN 3077 CLASE 9 MISCELANEOS MATERIALES PELIGROSOS" → extraes: "CONCENTRADO DE ZN"
   "POR CONCENTRADO DE PLATA Y ORO - GRANEL / CLASE: 09 UN: 3077" → extraes: "CONCENTRADO DE PLATA Y ORO"
   "POR MINERAL AURIFERO" → extraes: "MINERAL AURIFERO"

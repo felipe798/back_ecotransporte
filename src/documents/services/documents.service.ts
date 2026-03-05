@@ -31,8 +31,17 @@ export class DocumentsService {
     filePath: string,
   ): Promise<{ document: DocumentEntity; placaNoRegistrada: string | null; tarifaNoEncontrada: { cliente: string | null; partida: string | null; llegada: string | null; transportado: string | null } | null; }> {
     try {
+      // Cargar catálogo de materiales antes de llamar a OpenAI para que GPT haga el matching directo
+      let materialesCatalogo: string[] = [];
+      try {
+        const uniqueVals = await this.clientTariffService.getUniqueValues();
+        materialesCatalogo = uniqueVals.materiales || [];
+      } catch (e) {
+        console.warn('No se pudo cargar catálogo de materiales para OpenAI:', e?.message);
+      }
+
       // Enviar Buffer ----- directamente a OpenAI (la conversión PDF→Imagen se hace internamente)
-      const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer);
+      const aiResponse = await this.openaiService.extractDocumentData(pdfBuffer, materialesCatalogo);
 
       // Verificar si el documento fue rechazado por no ser válido
       if (aiResponse.rejected) {
@@ -482,8 +491,32 @@ export class DocumentsService {
       if (normalizedMaterial) {
         documentData.transportado = normalizedMaterial;
       } else {
-        console.log(`  ⚠️ Material "${transportado}" no coincide con ninguno del tarifario → null`);
-        documentData.transportado = null;
+        // No matchea el catálogo pero guardar el texto original para que sea visible
+        console.log(`  ⚠️ Material "${transportado}" no coincide con ninguno del tarifario → guardando original`);
+        documentData.transportado = transportado;
+      }
+    }
+
+    // Fallback del único candidato: si transportado quedó null pero el contexto
+    // cliente+partida tiene exactamente 1 material en el tarifario, asignarlo automáticamente.
+    if (!documentData.transportado) {
+      const ctxCliente = documentData.cliente;
+      const ctxPartida = documentData.partida;
+      if (ctxCliente && ctxPartida) {
+        try {
+          const contextTarifas = await this.clientTariffService.findByClienteAndPartida(ctxCliente, ctxPartida);
+          const contextMaterials = contextTarifas
+            .map(t => t.material)
+            .filter(Boolean) as string[];
+          if (contextMaterials.length === 1) {
+            documentData.transportado = contextMaterials[0];
+            console.log(`  ✓ Material asignado por único candidato en ruta: "${contextMaterials[0]}"`);
+          } else if (contextMaterials.length > 1) {
+            console.log(`  ⚠️ Múltiples materiales en ruta (${contextMaterials.join(', ')}), no se puede asignar automáticamente → null`);
+          }
+        } catch (e) {
+          console.log('  Error al obtener tarifas para fallback único candidato:', e?.message);
+        }
       }
     }
 
