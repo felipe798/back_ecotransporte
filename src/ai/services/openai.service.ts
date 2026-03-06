@@ -298,7 +298,7 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
 
 - mes: Mes de la fecha de emisión en español minúsculas (enero, febrero, marzo, etc.).
 
-- semana: Número de semana ISO del año correspondiente a la fecha. SIN ceros a la izquierda ("1", "9", "10", nunca "01", "09").
+- semana: Número de semana DEL MES correspondiente a la fecha. La semana 1 va del día 1 al primer domingo del mes; la semana 2 del primer lunes al segundo domingo; y así sucesivamente. SIN ceros a la izquierda ("1", "2", "5", nunca "01"). Nota: el servidor recalcula este valor, devuelve tu mejor estimación.
 
 - grt: Busca la línea que contiene "GUÍA DE REMISIÓN TRANSPORTISTA ELECTRÓNICA" y copia ÚNICAMENTE el código que aparece entre comillas en esa línea.
   Ejemplo de línea: GUÍA DE REMISIÓN TRANSPORTISTA ELECTRÓNICA "VVV1-000558" → extraes: "VVV1-000558"
@@ -314,9 +314,13 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Si tiene guión (ej: BEA-768), quítalo y devuelve BEA768. Solo la placa, nada más.
   NO confundir con el TUC que es un código largo (ej: 15M21034987E).
 
-- tn_enviado: Busca la tabla del documento que tiene las columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD". En la fila de esa tabla donde la columna U/M sea "TNE", extrae ÚNICAMENTE el número que aparece en la columna CANTIDAD (el último número de esa fila).
-  Ejemplo de fila: "1 2001 POR CONCENTRADO DE ZINC - GRANEL / CLASE: 09 UN: 3077 TNE 34.560" → extraes: 34.56
-  Redondea siempre a exactamente 2 decimales. Si hay varias filas con U/M TNE, usa la primera.
+- tn_enviado: Busca la tabla del documento que tiene las columnas "Nro.", "CÓD.", "DESCRIPCIÓN", "U/M", "CANTIDAD". Extrae el número de la columna CANTIDAD de cada fila donde U/M sea "TNE".
+  - Si hay UNA sola fila TNE → devuelve ese número.
+  - Si hay VARIAS filas TNE con el MISMO material → SUMA todas las CANTIDAD y devuelve el total.
+  - Si hay VARIAS filas TNE con MATERIALES DISTINTOS → devuelve solo la CANTIDAD de la fila 1.
+  Ejemplo fila única: "1 2001 POR CONCENTRADO DE ZINC TNE 34.560" → devuelves: 34.56
+  Ejemplo filas mismo material: "1 2001 POR LOTE MINERAL TNE 34.550" y "2 2001 POR LOTE MINERAL TNE 1.980" → devuelves: 36.53 (34.550 + 1.980)
+  Redondea siempre a exactamente 2 decimales.
 
 - grr: Busca la línea que contiene "GUÍA DE REMISIÓN REMITENTE" y extrae ÚNICAMENTE el código alfanumérico al final (empieza con EG o GR).
   Ejemplo: "GUÍA DE REMISIÓN REMITENTE EG07-5784" → extraes: "EG07-5784"
@@ -349,17 +353,21 @@ Si SÍ es válido, extrae los campos indicados buscando EXACTAMENTE las etiqueta
   Si la columna DESCRIPCIÓN dice literalmente "LOTE MINERAL" u otro texto con "LOTE", extráelo tal cual — puede ser un nombre de material válido.
 ${materiales.length > 0 ? `  IMPORTANTE: Una vez extraido el nombre del material, compáralo semánticamente con esta lista del catálogo registrado y devuelve EXACTAMENTE el valor más adecuado de la lista (copia textual), o null si ningúno corresponde:
   ${materiales.map(m => `"${m}"`).join(', ')}
+  Equivalencias de símbolos químicos que DEBES aplicar al comparar:
+  - COBRE = CU,  ZINC = ZN,  ORO = AU,  PLATA = AG,  PLOMO = PB,  HIERRO = FE,  ESTAÑO = SN
   Ejemplos de matching semántico:
   - "CONCENTRADO DE ZN UN 3077" → si existe "CONCENTRADO DE ZN" en la lista → devuelves: "CONCENTRADO DE ZN"
   - "MINERAL AURIFERO" → si existe "MINERAL AURIFERO" → devuelves: "MINERAL AURIFERO"
-  - "CONCENTRADO DE ORO" → si existe "CONCENTRADO DE AU" → devuelves: "CONCENTRADO DE AU" (AU = ORO en tabla periódica)
-  - "LOTE MINERAL" o cualquier referencia de lote → devuelves: null
+  - "CONCENTRADO DE ORO" → si existe "CONCENTRADO DE AU" en la lista → devuelves: "CONCENTRADO DE AU" (AU = ORO)
+  - "CONCENTRADO DE COBRE" → si existe "CONCENTRADO DE CU" o "CONCETRADO DE CU" en la lista → devuelves ese valor exacto (COBRE = CU)
+  - "CONCENTRADO DE COBRE - GRANEL" → busca "CU" en la lista → devuelves el que contenga "CU"
+  - "LOTE MINERAL" → si existe "LOTE MINERAL" en la lista → devuelves: "LOTE MINERAL"; si no existe → devuelves: null
   - Si el material no tiene equivalente claro en la lista → devuelves: null` : `  El resultado debe ser solo el nombre del material.`}  
   Ejemplos de extracción:
   "POR CONCENTRADO DE ZN UN 3077 CLASE 9 MISCELANEOS MATERIALES PELIGROSOS" → extraes: "CONCENTRADO DE ZN"
   "POR CONCENTRADO DE PLATA Y ORO - GRANEL / CLASE: 09 UN: 3077" → extraes: "CONCENTRADO DE PLATA Y ORO"
   "POR MINERAL AURIFERO" → extraes: "MINERAL AURIFERO"
-  "LOTE MINERAL" o "LOTE N° 123" → NO es válido, extrae el nombre real de la columna DESCRIPCIÓN
+  "POR CONCENTRADO DE COBRE - GRANEL" → extrae "CONCENTRADO DE COBRE" y mapea a "CONCETRADO DE CU" si existe en el catálogo
 
 === CAMPOS QUE SIEMPRE VAN NULL (no busques estos en el documento) ===
 - empresa: null (se determina automáticamente desde la base de datos según la placa)

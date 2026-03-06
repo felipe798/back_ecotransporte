@@ -56,6 +56,16 @@ export class ClientTariffService {
   }
 
   /**
+   * Búsqueda exacta con los 4 campos: cliente + partida + llegada + material.
+   * Es la búsqueda más específica y debe usarse primero cuando el material está disponible.
+   */
+  async findByFullRoute(cliente: string, partida: string, llegada: string, material: string): Promise<ClientTariffEntity | null> {
+    return await this.clientTariffRepository.findOne({
+      where: { cliente, partida, llegada, material },
+    });
+  }
+
+  /**
    * Búsqueda flexible: por cliente + partida (sin llegada)
    * Retorna todas las tarifas que coincidan
    */

@@ -76,6 +76,28 @@ export class DocumentsService {
         }
       }
 
+      // Calcular semana del mes en el backend (no confiar en GPT para aritmética de fechas)
+      // Regla: semana 1 = día 1 al primer domingo del mes
+      //        semana 2 = primer lunes al segundo domingo, etc.
+      if (documentData.fecha && typeof documentData.fecha === 'string') {
+        const fechaParts = (documentData.fecha as string).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (fechaParts) {
+          const year  = Number(fechaParts[1]);
+          const month = Number(fechaParts[2]) - 1; // 0-indexed
+          const day   = Number(fechaParts[3]);
+          const dateObj = new Date(year, month, day);
+          // Día de la semana del día 1 del mes (0=Dom, 1=Lun, ..., 6=Sáb)
+          const firstDayOfMonth = new Date(year, month, 1).getDay();
+          // Número de día del mes en que cae el primer domingo
+          const firstSundayDay = firstDayOfMonth === 0 ? 1 : 8 - firstDayOfMonth;
+          const weekOfMonth = day <= firstSundayDay ? 1 : 1 + Math.ceil((day - firstSundayDay) / 7);
+          documentData.semana = String(weekOfMonth);
+          const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+          documentData.mes = meses[dateObj.getMonth()];
+          console.log(`📅 Semana del mes (backend): día ${day} → semana ${weekOfMonth} de ${documentData.mes}`);
+        }
+      }
+
       // Por ahora TN Recibida = TN Enviado al subir la guía
       if (documentData.tn_enviado && !documentData.tn_recibida) {
         documentData.tn_recibida = documentData.tn_enviado;
@@ -619,8 +641,44 @@ export class DocumentsService {
       .replace(/[^a-z0-9\s]/g, '')
       .replace(/\s+/g, ' ').trim();
 
+    // Mapa de sinónimos: nombre español ↔ símbolo químico
+    // Permite que "COBRE" haga match con "CU", "ORO" con "AU", etc.
+    // También cubre el typo frecuente "CONCETRADO" (sin N) = "CONCENTRADO"
+    const SYNONYM_MAP: Record<string, string[]> = {
+      'cobre':       ['cu'],
+      'copper':      ['cu'],
+      'zinc':        ['zn'],
+      'oro':         ['au'],
+      'gold':        ['au'],
+      'plata':       ['ag'],
+      'silver':      ['ag'],
+      'plomo':       ['pb'],
+      'lead':        ['pb'],
+      'hierro':      ['fe'],
+      'iron':        ['fe'],
+      // inverso: símbolo → nombre español
+      'cu':          ['cobre'],
+      'au':          ['oro'],
+      'ag':          ['plata'],
+      'zn':          ['zinc'],
+      'pb':          ['plomo'],
+      'fe':          ['hierro'],
+      // typo frecuente en catálogo: "CONCETRADO" en lugar de "CONCENTRADO"
+      'concetrado':  ['concentrado'],
+      'concentrado': ['concetrado'],
+    };
+
+    const expandSynonyms = (words: Set<string>): Set<string> => {
+      const expanded = new Set(words);
+      for (const w of words) {
+        for (const syn of (SYNONYM_MAP[w] ?? [])) expanded.add(syn);
+      }
+      return expanded;
+    };
+
     const normalizedInput = this.normalizeStringAggressive(input);
-    const inputWords = new Set(normWords(input).split(' ').filter(w => w.length > 1));
+    const rawInputWords = new Set(normWords(input).split(' ').filter(w => w.length > 1));
+    const inputWords = expandSynonyms(rawInputWords);
 
     // Ordenar de más largo a más corto para que el más específico gane
     const sortedMaterials = [...materials].sort((a, b) => b.length - a.length);
@@ -634,26 +692,27 @@ export class DocumentsService {
       }
     }
 
-    // Paso 2: Todas las palabras del candidato están en el input Y viceversa
-    // "CONCENTRADO DE ORO" vs "CONCENTRADO DE PLOMO" → "plomo" no está en inputWords → no match
+    // Paso 2: Todas las palabras del candidato (expandidas) están en el input (expandido) Y viceversa
+    // Expansión cubre: COBRE↔CU, ORO↔AU, CONCETRADO↔CONCENTRADO (typo del catálogo)
     console.log(`  Buscando material por intersección de palabras...`);
     for (const material of sortedMaterials) {
-      const candidateWords = normWords(material).split(' ').filter(w => w.length > 1);
-      if (candidateWords.length === 0) continue;
-      const allCandidateInInput = candidateWords.every(w => inputWords.has(w));
-      const allInputInCandidate = [...inputWords].every(w => candidateWords.includes(w));
+      const rawCandidateWords = normWords(material).split(' ').filter(w => w.length > 1);
+      if (rawCandidateWords.length === 0) continue;
+      const candidateWords = expandSynonyms(new Set(rawCandidateWords));
+      const allCandidateInInput = rawCandidateWords.every(w => inputWords.has(w) || [...(SYNONYM_MAP[w] ?? [])].some(s => inputWords.has(s)));
+      const allInputInCandidate = [...rawInputWords].every(w => candidateWords.has(w) || [...(SYNONYM_MAP[w] ?? [])].some(s => candidateWords.has(s)));
       if (allCandidateInInput && allInputInCandidate) {
-        console.log(`  ✓ Material encontrado por palabras exactas: "${material}"`);
+        console.log(`  ✓ Material encontrado por palabras exactas (con sinónimos): "${material}"`);
         return material;
       }
     }
 
-    // Paso 3: Subset — todas las palabras del candidato están en el input (input puede tener extra)
+    // Paso 3: Subset — todas las palabras del candidato (expandidas) están en el input (expandido)
     for (const material of sortedMaterials) {
-      const candidateWords = normWords(material).split(' ').filter(w => w.length > 1);
-      if (candidateWords.length === 0) continue;
-      if (candidateWords.every(w => inputWords.has(w))) {
-        console.log(`  ✓ Material encontrado por subset candidato⊆input: "${material}"`);
+      const rawCandidateWords = normWords(material).split(' ').filter(w => w.length > 1);
+      if (rawCandidateWords.length === 0) continue;
+      if (rawCandidateWords.every(w => inputWords.has(w) || [...(SYNONYM_MAP[w] ?? [])].some(s => inputWords.has(s)))) {
+        console.log(`  ✓ Material encontrado por subset candidato⊆input (con sinónimos): "${material}"`);
         return material;
       }
     }
@@ -858,9 +917,10 @@ export class DocumentsService {
   /**
    * Calcula los campos financieros basados en el tarifario
    * Estrategia de búsqueda:
-   * 1. Buscar por cliente + partida + llegada (exacto)
-   * 2. Si no encuentra, buscar por cliente + partida + material
-   * 3. Si no encuentra, buscar por cliente + partida (primera coincidencia)
+   * 1. Buscar por cliente + partida + llegada + material (exacto, más específico)
+   * 2. Buscar por cliente + partida + llegada (sin material)
+   * 3. Buscar por cliente + partida + material (sin llegada)
+   * 4. Buscar por cliente + partida (primera coincidencia)
    */
   private async calculateFinancialFields(documentData: Partial<DocumentEntity>): Promise<boolean> {
     const { cliente, partida, llegada, transportado, empresa, tn_recibida } = documentData;
@@ -879,15 +939,23 @@ export class DocumentsService {
 
     let tarifa = null;
 
-    // 1. Buscar por cliente + partida + llegada (exacto)
-    if (llegada) {
+    // 1. Búsqueda más específica: cliente + partida + llegada + material
+    if (llegada && transportado) {
+      tarifa = await this.clientTariffService.findByFullRoute(cliente, partida, llegada, transportado);
+      if (tarifa) {
+        console.log('✓ Tarifa encontrada por cliente+partida+llegada+material');
+      }
+    }
+
+    // 2. Fallback: cliente + partida + llegada (sin material)
+    if (!tarifa && llegada) {
       tarifa = await this.clientTariffService.findByRoute(partida, llegada, cliente);
       if (tarifa) {
         console.log('✓ Tarifa encontrada por cliente+partida+llegada');
       }
     }
 
-    // 2. Si no encuentra y hay material, buscar por cliente + partida + material
+    // 3. Si no encuentra y hay material, buscar por cliente + partida + material (sin llegada)
     if (!tarifa && transportado) {
       tarifa = await this.clientTariffService.findByClientePartidaMaterial(cliente, partida, transportado);
       if (tarifa) {
@@ -897,7 +965,7 @@ export class DocumentsService {
       }
     }
 
-    // 3. Si todavía no encuentra, buscar por cliente + partida (primera coincidencia)
+    // 4. Si todavía no encuentra, buscar por cliente + partida (primera coincidencia)
     if (!tarifa) {
       const tarifas = await this.clientTariffService.findByClienteAndPartida(cliente, partida);
       if (tarifas.length > 0) {
