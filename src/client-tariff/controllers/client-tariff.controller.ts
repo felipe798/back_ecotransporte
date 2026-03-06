@@ -66,6 +66,16 @@ export class ClientTariffController {
     return this.clientTariffService.findByRoute(partida, llegada, cliente);
   }
 
+  @Get('search-match')
+  searchMatch(
+    @Query('cliente') cliente: string,
+    @Query('partida') partida: string,
+    @Query('llegada') llegada: string,
+    @Query('material') material: string,
+  ) {
+    return this.clientTariffService.searchMatchingTariffs(cliente, partida, llegada, material);
+  }
+
   @Get('cliente/:cliente')
   findByCliente(@Param('cliente') cliente: string) {
     return this.clientTariffService.findByCliente(cliente);

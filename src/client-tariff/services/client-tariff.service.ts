@@ -118,6 +118,23 @@ export class ClientTariffService {
     });
   }
 
+  /**
+   * Búsqueda flexible para el selector de tarifas en edición de documentos.
+   * Filtra por los campos proporcionados (cliente, partida, llegada, material).
+   */
+  async searchMatchingTariffs(cliente?: string, partida?: string, llegada?: string, material?: string): Promise<ClientTariffEntity[]> {
+    const where: Record<string, string> = {};
+    if (cliente) where.cliente = cliente;
+    if (partida) where.partida = partida;
+    if (llegada) where.llegada = llegada;
+    if (material) where.material = material;
+
+    return await this.clientTariffRepository.find({
+      where,
+      order: { id: 'ASC' },
+    });
+  }
+
   async update(id: number, updateDto: UpdateClientTariffDto): Promise<ClientTariffEntity> {
     const tariff = await this.findOne(id);
     const oldValues = {
