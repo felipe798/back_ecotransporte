@@ -361,7 +361,7 @@ export class DashboardService {
   async getTnPorUnidad(filters: DashboardFilters): Promise<any[]> {
     const queryBuilder = this.createDocQuery()
       .select('doc.unidad', 'placa')
-      .addSelect('SUM(doc.tn_enviado)', 'total')
+      .addSelect('SUM(doc.tn_recibida)', 'total')
       .andWhere('doc.unidad IS NOT NULL');
 
     if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
