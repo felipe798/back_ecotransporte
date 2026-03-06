@@ -798,7 +798,7 @@ export class DashboardService {
 
     const result = await queryBuilder
       .groupBy('doc.fecha')
-      .orderBy('doc.fecha', 'DESC')
+      .orderBy('doc.fecha', 'ASC')
       .getRawMany();
 
     console.log(`[getDiasConViajes] Total filas retornadas: ${result.length}`);

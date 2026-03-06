@@ -1062,7 +1062,7 @@ export class DocumentsService {
   async getAllDocuments(): Promise<DocumentEntity[]> {
     return await this.documentsRepository.find({
       relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { fecha: 'DESC', grt: 'DESC' },
+      order: { fecha: 'ASC', grr: 'ASC' },
     });
   }
 
@@ -1070,7 +1070,7 @@ export class DocumentsService {
     return await this.documentsRepository.find({
       where: { uploaded_by: userId },
       relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { fecha: 'DESC', grt: 'DESC' },
+      order: { fecha: 'ASC', grr: 'ASC' },
     });
   }
 
