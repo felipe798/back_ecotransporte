@@ -1060,18 +1060,28 @@ export class DocumentsService {
   }
 
   async getAllDocuments(): Promise<DocumentEntity[]> {
-    return await this.documentsRepository.find({
-      relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { fecha: 'ASC', grr: 'ASC' },
-    });
+    return await this.documentsRepository
+      .createQueryBuilder('doc')
+      .leftJoinAndSelect('doc.uploader', 'uploader')
+      .leftJoinAndSelect('uploader.userInformation', 'userInformation')
+      .leftJoinAndSelect('doc.unidadRelacion', 'unidadRelacion')
+      .leftJoinAndSelect('unidadRelacion.empresa', 'empresa')
+      .orderBy(`CAST(SUBSTRING(doc.grt FROM '([0-9]+)$') AS INTEGER)`, 'ASC')
+      .addOrderBy('doc.grt', 'ASC')
+      .getMany();
   }
 
   async getDocumentsByUser(userId: number): Promise<DocumentEntity[]> {
-    return await this.documentsRepository.find({
-      where: { uploaded_by: userId },
-      relations: ['uploader', 'uploader.userInformation', 'unidadRelacion', 'unidadRelacion.empresa'],
-      order: { fecha: 'ASC', grr: 'ASC' },
-    });
+    return await this.documentsRepository
+      .createQueryBuilder('doc')
+      .leftJoinAndSelect('doc.uploader', 'uploader')
+      .leftJoinAndSelect('uploader.userInformation', 'userInformation')
+      .leftJoinAndSelect('doc.unidadRelacion', 'unidadRelacion')
+      .leftJoinAndSelect('unidadRelacion.empresa', 'empresa')
+      .where('doc.uploaded_by = :userId', { userId })
+      .orderBy(`CAST(SUBSTRING(doc.grt FROM '([0-9]+)$') AS INTEGER)`, 'ASC')
+      .addOrderBy('doc.grt', 'ASC')
+      .getMany();
   }
 
   async updateDocument(
