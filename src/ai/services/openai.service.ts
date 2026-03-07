@@ -174,15 +174,39 @@ export class OpenAIService {
     if (unidadMatch) result.unidad = unidadMatch[1].replace(/-/g, '').trim();
 
     // TN_ENVIADO — columna CANTIDAD de la tabla donde U/M = "TNE"
-    // pdf-parse puede extraer la tabla en una sola línea o cada celda en línea separada.
-    // Estrategia 1: fila completa en una línea → "...TNE 34.560"
-    // Estrategia 2: celdas separadas → "TNE\n34.560" o "TNE\r\n34.560"
-    // Estrategia 3: "TNE\t34.560"
-    // Usamos un patrón flexible que cubre los 3 casos:
-    const tnMatch = pdfText.match(/\bTNE[\s\t\r\n]+([\d.,]+)/i);
-    if (tnMatch) {
-      const raw = tnMatch[1].replace(',', '.');
-      result.tn_enviado = Math.round(parseFloat(raw) * 100) / 100;
+    // Busca todas las filas de la tabla con descripción + TNE + cantidad
+    // Si hay múltiples filas con el MISMO material → suma todas las cantidades
+    // Si hay múltiples filas con MATERIALES DISTINTOS → usa solo la primera fila
+    const tneRowRegex = /\d+\s+\d+\s+(.*?)\s+TNE[\s\t\r\n]+([\d.,]+)/gi;
+    const tneRows: { description: string; amount: number }[] = [];
+    let tneRowMatch;
+    while ((tneRowMatch = tneRowRegex.exec(pdfText)) !== null) {
+      const desc = tneRowMatch[1].trim().toUpperCase().replace(/^POR\s+/, '');
+      const amount = parseFloat(tneRowMatch[2].replace(',', '.'));
+      if (!isNaN(amount)) tneRows.push({ description: desc, amount });
+    }
+
+    if (tneRows.length === 1) {
+      result.tn_enviado = Math.round(tneRows[0].amount * 100) / 100;
+    } else if (tneRows.length > 1) {
+      const firstDesc = tneRows[0].description;
+      const allSame = tneRows.every(r => r.description === firstDesc);
+      if (allSame) {
+        const total = tneRows.reduce((sum, r) => sum + r.amount, 0);
+        result.tn_enviado = Math.round(total * 100) / 100;
+        console.log(`  📦 ${tneRows.length} filas TNE mismo material → suma total: ${result.tn_enviado}`);
+      } else {
+        // Materiales distintos: usar solo la primera fila (caso para implementar después)
+        result.tn_enviado = Math.round(tneRows[0].amount * 100) / 100;
+        console.log(`  📦 Múltiples filas TNE distintos materiales → usando primera fila: ${result.tn_enviado}`);
+      }
+    } else {
+      // Fallback: regex simple si el formato de la tabla no fue detectado
+      const tnMatch = pdfText.match(/\bTNE[\s\t\r\n]+([\d.,]+)/i);
+      if (tnMatch) {
+        const raw = tnMatch[1].replace(',', '.');
+        result.tn_enviado = Math.round(parseFloat(raw) * 100) / 100;
+      }
     }
 
     // CLIENTE — primera aparición de "DENOMINACIÓN:" (sección REMITENTE)
@@ -427,8 +451,16 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
           temperature: 0,
         });
         console.log('OpenAI respondió OK');
-        console.log('Tokens usados:', response?.usage?.total_tokens);
         console.log('Finish reason:', response?.choices?.[0]?.finish_reason);
+        // Desglose de tokens y costo estimado (GPT-4o: $2.50/1M input, $10.00/1M output)
+        const promptTokens = response?.usage?.prompt_tokens ?? 0;
+        const completionTokens = response?.usage?.completion_tokens ?? 0;
+        const totalTokens = response?.usage?.total_tokens ?? 0;
+        const costInput  = (promptTokens    / 1_000_000) * 2.50;
+        const costOutput = (completionTokens / 1_000_000) * 10.00;
+        const costTotal  = costInput + costOutput;
+        console.log(`💰 Tokens: ${totalTokens} (input: ${promptTokens}, output: ${completionTokens})`);
+        console.log(`💵 Costo estimado: $${costTotal.toFixed(6)} USD (input: $${costInput.toFixed(6)} + output: $${costOutput.toFixed(6)})`);
       } catch (openaiErr: any) {
         console.error('=== ERROR EN LLAMADA A OPENAI ===');
         console.error('Tipo:', openaiErr?.constructor?.name);
