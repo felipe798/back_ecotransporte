@@ -513,6 +513,7 @@ export class DashboardService {
   async getDetalleTransportista(filters: DashboardFilters): Promise<any[]> {
     const queryBuilder = this.createDocQuery()
       .select('doc.transportista', 'transportista')
+      .addSelect('COALESCE(doc.divisa_cost, \'PEN\')', 'divisa_cost')
       .addSelect('COUNT(*)', 'cantidad_traslados')
       .addSelect('SUM(doc.tn_enviado)', 'tn_enviado')
       .addSelect('SUM(doc.tn_recibida)', 'tn_recibido')
@@ -528,6 +529,7 @@ export class DashboardService {
 
     return await queryBuilder
       .groupBy('doc.transportista')
+      .addGroupBy('doc.divisa_cost')
       .orderBy('tn_enviado', 'DESC')
       .getRawMany();
   }
