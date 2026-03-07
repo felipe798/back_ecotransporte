@@ -5,14 +5,35 @@ import { DocumentEntity } from '../../documents/entities/document.entity';
 import { UnidadEntity } from '../../unidad/entities/unidad.entity';
 import { EmpresaTransporteEntity } from '../../empresa-transporte/entities/empresa-transporte.entity';
 import { ClientTariffEntity } from '../../client-tariff/entities/client-tariff.entity';
+import { IsOptional, IsString } from 'class-validator';
 
-export interface DashboardFilters {
+export class DashboardFilters {
+  @IsOptional()
+  @IsString()
   mes?: string;
+
+  @IsOptional()
+  @IsString()
   semana?: string;
+
+  @IsOptional()
+  @IsString()
   cliente?: string;
+
+  @IsOptional()
+  @IsString()
   transportista?: string;
+
+  @IsOptional()
+  @IsString()
   unidad?: string;
+
+  @IsOptional()
+  @IsString()
   transportado?: string;
+
+  @IsOptional()
+  @IsString()
   divisa?: string;
 }
 
@@ -162,7 +183,7 @@ export class DashboardService {
     if (filters?.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
     if (filters?.transportado) queryBuilder.andWhere('doc.transportado = :transportado', { transportado: filters.transportado });
 
-    return await queryBuilder.orderBy('doc.fecha', 'DESC').limit(50).getMany();
+    return await queryBuilder.orderBy(`CAST(SUBSTRING(doc.grt FROM '([0-9]+)$') AS INTEGER)`, 'ASC').addOrderBy('doc.grt', 'ASC').limit(50).getMany();
   }
 
   /**
