@@ -173,40 +173,45 @@ export class OpenAIService {
     const unidadMatch = pdfText.match(/VEH[IÍ]CULO PRINCIPAL\s*:\s*([A-Z0-9]{2,3}-?[A-Z0-9]{3,4})(?:\b|\s)/i);
     if (unidadMatch) result.unidad = unidadMatch[1].replace(/-/g, '').trim();
 
-    // TN_ENVIADO — columna CANTIDAD de la tabla donde U/M = "TNE"
-    // Busca todas las filas de la tabla con descripción + TNE + cantidad
-    // Si hay múltiples filas con el MISMO material → suma todas las cantidades
-    // Si hay múltiples filas con MATERIALES DISTINTOS → usa solo la primera fila
-    const tneRowRegex = /\d+\s+\d+\s+(.*?)\s+TNE[\s\t\r\n]+([\d.,]+)/gi;
-    const tneRows: { description: string; amount: number }[] = [];
+    // TN_ENVIADO — suma TODAS las filas con U/M = TNE (el material no importa para el peso)
+    // Estrategia 1: filas estructuradas con Nro. + CÓD. + descripción + TNE + cantidad
+    // Estrategia 2 (fallback): busca todas las ocurrencias de "TNE <número>" en texto plano
+    // La fila KGM es ignorada porque el regex solo captura TNE.
+    // "PESO BRUTO TOTAL (TNE): 53.21" es ignorado porque va seguido de ")" no de espacio+número.
+
+    // --- Estrategia 1: filas estructuradas ---
+    const tneRowRegex = /\d+\s+\d+\s+.*?\s+TNE\s+([\d.,]+)/gi;
+    const tneRowAmounts: number[] = [];
     let tneRowMatch;
     while ((tneRowMatch = tneRowRegex.exec(pdfText)) !== null) {
-      const desc = tneRowMatch[1].trim().toUpperCase().replace(/^POR\s+/, '');
-      const amount = parseFloat(tneRowMatch[2].replace(',', '.'));
-      if (!isNaN(amount)) tneRows.push({ description: desc, amount });
+      const amount = parseFloat(tneRowMatch[1].replace(',', '.'));
+      if (!isNaN(amount)) tneRowAmounts.push(amount);
     }
 
-    if (tneRows.length === 1) {
-      result.tn_enviado = Math.round(tneRows[0].amount * 100) / 100;
-    } else if (tneRows.length > 1) {
-      const firstDesc = tneRows[0].description;
-      const allSame = tneRows.every(r => r.description === firstDesc);
-      if (allSame) {
-        const total = tneRows.reduce((sum, r) => sum + r.amount, 0);
-        result.tn_enviado = Math.round(total * 100) / 100;
-        console.log(`  📦 ${tneRows.length} filas TNE mismo material → suma total: ${result.tn_enviado}`);
-      } else {
-        // Materiales distintos: usar solo la primera fila (caso para implementar después)
-        result.tn_enviado = Math.round(tneRows[0].amount * 100) / 100;
-        console.log(`  📦 Múltiples filas TNE distintos materiales → usando primera fila: ${result.tn_enviado}`);
+    if (tneRowAmounts.length >= 1) {
+      const total = tneRowAmounts.reduce((sum, a) => sum + a, 0);
+      result.tn_enviado = Math.round(total * 100) / 100;
+      if (tneRowAmounts.length > 1) {
+        console.log(`  📦 Estrategia 1: ${tneRowAmounts.length} filas TNE → suma: ${result.tn_enviado}`);
       }
     } else {
-      // Fallback: regex simple si el formato de la tabla no fue detectado
-      const tnMatch = pdfText.match(/\bTNE[\s\t\r\n]+([\d.,]+)/i);
-      if (tnMatch) {
-        const raw = tnMatch[1].replace(',', '.');
-        result.tn_enviado = Math.round(parseFloat(raw) * 100) / 100;
+      // --- Estrategia 2 (fallback): busca todas las ocurrencias de "TNE <número>" ---
+      const tneAllRegex = /\bTNE[\s\t\r\n]+([\d.,]+)/gi;
+      const tneAllAmounts: number[] = [];
+      let tneAllMatch;
+      while ((tneAllMatch = tneAllRegex.exec(pdfText)) !== null) {
+        const amount = parseFloat(tneAllMatch[1].replace(',', '.'));
+        if (!isNaN(amount)) tneAllAmounts.push(amount);
       }
+
+      if (tneAllAmounts.length >= 1) {
+        const total = tneAllAmounts.reduce((sum, a) => sum + a, 0);
+        result.tn_enviado = Math.round(total * 100) / 100;
+        if (tneAllAmounts.length > 1) {
+          console.log(`  📦 Estrategia 2 (fallback): ${tneAllAmounts.length} valores TNE → suma: ${result.tn_enviado}`);
+        }
+      }
+      // Si length === 0 → no se encontró TNE → result.tn_enviado queda undefined
     }
 
     // CLIENTE — primera aparición de "DENOMINACIÓN:" (sección REMITENTE)
