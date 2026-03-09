@@ -40,4 +40,8 @@ export class CreateClientTariffDto {
   @IsNotEmpty()
   @IsString()
   divisa: string;
+
+  @IsOptional()
+  @IsString()
+  mes?: string;
 }

@@ -38,4 +38,7 @@ export class ClientTariffEntity {
 
   @Column({ length: 50 })
   divisa: string;
+
+  @Column({ length: 100, nullable: true })
+  mes: string;
 }
