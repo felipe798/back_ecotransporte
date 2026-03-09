@@ -1095,30 +1095,33 @@ export class DocumentsService {
     }
 
     // Si se actualiza tn_recibida, recalcular campos financieros
+    // Usar los valores del request (updateData) si vienen, sino los de la BD (existingDoc)
     if (updateData.tn_recibida !== undefined) {
       const existingDoc = await this.getDocumentById(id);
       if (existingDoc) {
         const tn_recibida = Number(updateData.tn_recibida);
-        
+        const precioUnitario = updateData.precio_unitario ?? existingDoc.precio_unitario;
+        const pcosto = updateData.pcosto ?? existingDoc.pcosto;
+        const transportista = updateData.transportista ?? existingDoc.transportista ?? '';
+
         // Recalcular precio_final = precio_unitario * tn_recibida
-        if (existingDoc.precio_unitario) {
-          updateData.precio_final = Number((existingDoc.precio_unitario * tn_recibida).toFixed(2));
+        if (precioUnitario) {
+          updateData.precio_final = Number((Number(precioUnitario) * tn_recibida).toFixed(2));
         }
 
         // Recalcular costo_final
         // Si transportista es ECOTRANSPORTE, costo_final = 0
         // Sino, costo_final = pcosto * tn_recibida
-        const transportista = existingDoc.transportista || '';
         if (transportista.toUpperCase().includes('ECOTRANSPORTE')) {
           updateData.costo_final = 0;
-        } else if (existingDoc.pcosto) {
-          updateData.costo_final = Number((existingDoc.pcosto * tn_recibida).toFixed(2));
+        } else if (pcosto) {
+          updateData.costo_final = Number((Number(pcosto) * tn_recibida).toFixed(2));
         }
 
         // Recalcular margen_operativo = precio_final - costo_final
         const precioFinal = updateData.precio_final ?? existingDoc.precio_final ?? 0;
         const costoFinal = updateData.costo_final ?? existingDoc.costo_final ?? 0;
-        updateData.margen_operativo = Number((precioFinal - costoFinal).toFixed(2));
+        updateData.margen_operativo = Number((Number(precioFinal) - Number(costoFinal)).toFixed(2));
       }
     }
 
