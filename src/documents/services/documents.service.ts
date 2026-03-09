@@ -1025,15 +1025,18 @@ export class DocumentsService {
       // Si transportista ES ECOTRANSPORTE → costo_final = 0
       const transportista = documentData.transportista || '';
       if (transportista.toUpperCase().includes('ECOTRANSPORTE')) {
+        documentData.pcosto = 0;
         documentData.costo_final = 0;
-        console.log('Transportista es ECOTRANSPORTE, costo_final = 0');
-      } else if (documentData.pcosto && tn_recibida) {
-        documentData.costo_final = Number((documentData.pcosto * Number(tn_recibida)).toFixed(2));
-      }
-
-      // Calcular margen operativo = precio_final - costo_final
-      if (documentData.precio_final !== null && documentData.costo_final !== null) {
-        documentData.margen_operativo = Number((documentData.precio_final - documentData.costo_final).toFixed(2));
+        documentData.margen_operativo = 0;
+        console.log('Transportista es ECOTRANSPORTE, pcosto/costo_final/margen_operativo = 0');
+      } else {
+        if (documentData.pcosto && tn_recibida) {
+          documentData.costo_final = Number((documentData.pcosto * Number(tn_recibida)).toFixed(2));
+        }
+        // Calcular margen operativo = precio_final - costo_final
+        if (documentData.precio_final !== null && documentData.costo_final !== null) {
+          documentData.margen_operativo = Number((documentData.precio_final - documentData.costo_final).toFixed(2));
+        }
       }
       console.log('=== FIN BÚSQUEDA TARIFA ===\n');
       return true;
@@ -1103,25 +1106,36 @@ export class DocumentsService {
         const precioUnitario = updateData.precio_unitario ?? existingDoc.precio_unitario;
         const pcosto = updateData.pcosto ?? existingDoc.pcosto;
         const transportista = updateData.transportista ?? existingDoc.transportista ?? '';
+        const cliente = (updateData.cliente ?? existingDoc.cliente ?? '').toUpperCase();
+        const esTarifaFija = cliente.includes('NUKLEO') || cliente.includes('PAY METAL');
 
-        // Recalcular precio_final = precio_unitario * tn_recibida
+        // Recalcular precio_final
+        // Si es tarifa fija (Nukleo/Pay Metal) → precio_final = precio_unitario (sin × TN)
         if (precioUnitario) {
-          updateData.precio_final = Number((Number(precioUnitario) * tn_recibida).toFixed(2));
+          updateData.precio_final = esTarifaFija
+            ? Number(Number(precioUnitario).toFixed(2))
+            : Number((Number(precioUnitario) * tn_recibida).toFixed(2));
         }
 
         // Recalcular costo_final
         // Si transportista es ECOTRANSPORTE, costo_final = 0
+        // Si es tarifa fija → costo_final = pcosto (sin × TN)
         // Sino, costo_final = pcosto * tn_recibida
         if (transportista.toUpperCase().includes('ECOTRANSPORTE')) {
+          updateData.pcosto = 0;
           updateData.costo_final = 0;
-        } else if (pcosto) {
-          updateData.costo_final = Number((Number(pcosto) * tn_recibida).toFixed(2));
+          updateData.margen_operativo = 0;
+        } else {
+          if (pcosto) {
+            updateData.costo_final = esTarifaFija
+              ? Number(Number(pcosto).toFixed(2))
+              : Number((Number(pcosto) * tn_recibida).toFixed(2));
+          }
+          // Recalcular margen_operativo = precio_final - costo_final
+          const precioFinal = updateData.precio_final ?? existingDoc.precio_final ?? 0;
+          const costoFinal = updateData.costo_final ?? existingDoc.costo_final ?? 0;
+          updateData.margen_operativo = Number((Number(precioFinal) - Number(costoFinal)).toFixed(2));
         }
-
-        // Recalcular margen_operativo = precio_final - costo_final
-        const precioFinal = updateData.precio_final ?? existingDoc.precio_final ?? 0;
-        const costoFinal = updateData.costo_final ?? existingDoc.costo_final ?? 0;
-        updateData.margen_operativo = Number((Number(precioFinal) - Number(costoFinal)).toFixed(2));
       }
     }
 

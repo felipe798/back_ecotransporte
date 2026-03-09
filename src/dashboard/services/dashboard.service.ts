@@ -669,7 +669,8 @@ export class DashboardService {
       .addSelect('COALESCE(doc.divisa_cost, \'PEN\')', 'divisa')
       .addSelect('SUM(doc.costo_final)', 'total')
       .andWhere('doc.costo_final IS NOT NULL')
-      .andWhere('doc.costo_final > 0');
+      .andWhere('doc.costo_final > 0')
+      .andWhere('(et.nombre IS NULL OR UPPER(et.nombre) NOT LIKE :exclEmpresa)', { exclEmpresa: '%ECOTRANSPORTE%' });
 
     if (filters.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
