@@ -518,7 +518,7 @@ export class DashboardService {
       .addSelect('SUM(doc.tn_enviado)', 'tn_enviado')
       .addSelect('SUM(doc.tn_recibida)', 'tn_recibido')
       .addSelect('SUM(doc.tn_recibida) - SUM(doc.tn_enviado)', 'variacion')
-      .addSelect('SUM(doc.costo_final)', 'costo_total')
+      .addSelect('SUM(CASE WHEN UPPER(doc.transportista) LIKE \'%ECOTRANSPORTE%\' THEN 0 ELSE COALESCE(doc.costo_final, 0) END)', 'costo_total')
       .andWhere('doc.transportista IS NOT NULL');
 
     if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
