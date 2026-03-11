@@ -518,7 +518,7 @@ export class DashboardService {
       .addSelect('SUM(doc.tn_enviado)', 'tn_enviado')
       .addSelect('SUM(doc.tn_recibida)', 'tn_recibido')
       .addSelect('SUM(doc.tn_recibida) - SUM(doc.tn_enviado)', 'variacion')
-      .addSelect('SUM(CASE WHEN UPPER(doc.transportista) LIKE \'%ECOTRANSPORTE%\' THEN 0 ELSE COALESCE(doc.costo_final, 0) END)', 'costo_total')
+      .addSelect('SUM(COALESCE(doc.precio_final, 0))', 'precio_total')
       .andWhere('doc.transportista IS NOT NULL');
 
     if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
@@ -820,6 +820,7 @@ export class DashboardService {
 
     if (filters.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
+    if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
 
     const result = await queryBuilder
       .groupBy('doc.fecha')
@@ -862,6 +863,7 @@ export class DashboardService {
 
     if (filters.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
+    if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
 
     return await queryBuilder
       .groupBy('doc.unidad')
@@ -882,6 +884,7 @@ export class DashboardService {
 
     if (filters.cliente) viajesQuery.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) viajesQuery.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
+    if (filters.mes) viajesQuery.andWhere('doc.mes = :mes', { mes: filters.mes });
 
     // Total de traslados
     const trasladosQuery = this.createDocQuery()
@@ -890,6 +893,7 @@ export class DashboardService {
 
     if (filters.cliente) trasladosQuery.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) trasladosQuery.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
+    if (filters.mes) trasladosQuery.andWhere('doc.mes = :mes', { mes: filters.mes });
 
     const [viajesResult, trasladosResult] = await Promise.all([
       viajesQuery.getRawOne(),
@@ -1008,11 +1012,23 @@ export class DashboardService {
   /**
    * Tablas Detalladas: Venta, Costo y Margen agrupados por cliente → material y empresa
    */
-  async getTablasDetalladas(mes: string): Promise<any> {
-    // 1. Obtener todos los documentos no anulados del mes
-    const docs = await this.createDocQuery()
+  async getTablasDetalladas(mes: string, semana?: string): Promise<any> {
+    // 1. Obtener todos los documentos no anulados del mes (sin filtro de semana)
+    const allDocsDelMes = await this.createDocQuery()
       .andWhere('doc.mes = :mes', { mes })
       .getMany();
+
+    // Semanas disponibles en el mes (para devolver al frontend y construir el selector)
+    const semanasSet = new Set<string>();
+    for (const d of allDocsDelMes) {
+      if (d.semana) semanasSet.add(String(d.semana));
+    }
+    const semanasDisponibles = [...semanasSet].sort((a, b) => Number(a) - Number(b));
+
+    // Filtrar por semana si se proporcionó
+    const docs = semana
+      ? allDocsDelMes.filter(d => String(d.semana) === String(semana))
+      : allDocsDelMes;
 
     // 2. Resolver empresa por placa
     const allUnidades = await this.unidadRepository.find();
@@ -1106,19 +1122,25 @@ export class DashboardService {
           const pcosto = Number(doc.pcosto) || 0;
           matDivisa = (doc.divisa || 'USD').toUpperCase().includes('PEN') ? 'PEN' : 'USD';
 
+          // Tarifa fija: Nukleo y Pay Metal cobran por servicio, no por tonelada
+          const clienteUpper = (doc.cliente || '').toUpperCase();
+          const esTarifaFija = clienteUpper.includes('NUKLEO') || clienteUpper.includes('PAY METAL');
+
+          const importeVenta = esTarifaFija ? precioUnit : precioUnit * tnRecibida;
+
           // Si la empresa del documento es ECOTRANSPORTE, el costo es 0 (empresa propia)
           const docEmpresaName = getDocEmpresa(doc);
           const esEcotransporte = docEmpresaName.toUpperCase().trim().includes('ECOTRANSPORTE');
-          const costoEfectivo = esEcotransporte ? 0 : pcosto * tnRecibida;
+          const costoEfectivo = esEcotransporte ? 0 : (esTarifaFija ? pcosto : pcosto * tnRecibida);
 
           data.general.tne += tnRecibida;
-          data.general.importeVenta += precioUnit * tnRecibida;
+          data.general.importeVenta += importeVenta;
           data.general.importeCosto += costoEfectivo;
 
           for (const emp of empresasColumna) {
             if (emp.toUpperCase().trim() === docEmpresaName.toUpperCase().trim()) {
               data[emp].tne += tnRecibida;
-              data[emp].importeVenta += precioUnit * tnRecibida;
+              data[emp].importeVenta += importeVenta;
               data[emp].importeCosto += costoEfectivo;
             }
           }
@@ -1173,6 +1195,8 @@ export class DashboardService {
 
     return {
       mes,
+      semana: semana || null,
+      semanasDisponibles,
       empresas: empresasColumna,
       grupos,
       totales,
@@ -1209,7 +1233,7 @@ export class DashboardService {
    * Reporte detallado de guías emitidas para una empresa de transporte en un mes.
    * Agrupa por placa (unidad) y sub-agrupa por semana.
    */
-  async getReporteGuias(empresaNombre: string, mes: string): Promise<any> {
+  async getReporteGuias(empresaNombre: string, mes: string, semana?: string): Promise<any> {
     // Obtener las placas de la empresa
     const empresa = await this.empresaRepository.findOne({
       where: { nombre: empresaNombre, estado: 'activo' },
@@ -1224,14 +1248,24 @@ export class DashboardService {
 
     if (placas.length === 0) return { error: 'No hay unidades activas para esta empresa' };
 
-    // Obtener documentos del mes para esas placas
-    const qb = this.createDocQuery()
+    // Obtener TODOS los documentos del mes para calcular semanas disponibles
+    const allDocsDelMes = await this.createDocQuery()
       .andWhere('doc.mes = :mes', { mes })
       .andWhere('doc.unidad IN (:...placas)', { placas })
       .orderBy('doc.fecha', 'ASC')
-      .addOrderBy('doc.id', 'ASC');
+      .addOrderBy('doc.id', 'ASC')
+      .getMany();
 
-    const docs = await qb.getMany();
+    const semanasSet = new Set<string>();
+    for (const d of allDocsDelMes) {
+      if (d.semana) semanasSet.add(String(d.semana));
+    }
+    const semanasDisponibles = [...semanasSet].sort((a, b) => Number(a) - Number(b));
+
+    // Filtrar por semana si se proporcionó
+    const docs = semana
+      ? allDocsDelMes.filter(d => String(d.semana) === String(semana))
+      : allDocsDelMes;
 
     // Agrupar por placa
     const placaGroups = new Map<string, any[]>();
@@ -1273,7 +1307,12 @@ export class DashboardService {
           const tnRecibida = Number(doc.tn_recibida) || 0;
           const tnEnviado = Number(doc.tn_enviado) || 0;
           const precioUnit = Number(doc.precio_unitario) || 0;
-          const bi = precioUnit * tnRecibida;
+
+          // Tarifa fija: Nukleo y Pay Metal cobran por servicio, no por tonelada
+          const clienteUpper = (doc.cliente || '').toUpperCase();
+          const esTarifaFija = clienteUpper.includes('NUKLEO') || clienteUpper.includes('PAY METAL');
+
+          const bi = esTarifaFija ? precioUnit : precioUnit * tnRecibida;
           const importeTotal = bi * 1.18;
           const div = (doc.divisa || 'USD').toUpperCase();
 
@@ -1324,6 +1363,8 @@ export class DashboardService {
     return {
       empresa: empresa.nombre,
       mes,
+      semana: semana || null,
+      semanasDisponibles,
       bloques,
       totalesGenerales: {
         totalTn: totalGeneralTn,

@@ -326,11 +326,14 @@ export class DashboardController {
    * Requiere query param: mes (obligatorio)
    */
   @Get('tablas-detalladas')
-  async getTablasDetalladas(@Query('mes') mes: string) {
+  async getTablasDetalladas(
+    @Query('mes') mes: string,
+    @Query('semana') semana?: string,
+  ) {
     if (!mes) {
       return { error: 'El parámetro mes es obligatorio' };
     }
-    return await this.dashboardService.getTablasDetalladas(mes);
+    return await this.dashboardService.getTablasDetalladas(mes, semana);
   }
 
   /**
@@ -348,10 +351,11 @@ export class DashboardController {
   async getReporteGuias(
     @Query('empresa') empresa: string,
     @Query('mes') mes: string,
+    @Query('semana') semana?: string,
   ) {
     if (!empresa || !mes) {
       return { error: 'Parámetros obligatorios: empresa, mes' };
     }
-    return await this.dashboardService.getReporteGuias(empresa, mes);
+    return await this.dashboardService.getReporteGuias(empresa, mes, semana);
   }
 }
