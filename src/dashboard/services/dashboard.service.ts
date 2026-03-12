@@ -749,7 +749,7 @@ export class DashboardService {
   }
 
   /**
-   * Seguimiento de Transporte: TN Enviado por Semana
+   * Seguimiento de Transporte: TN Recibido por Semana
    * Agrupado por Cliente → Empresa → Unidad → Semana
    */
   async getSeguimientoTransporte(filters: DashboardFilters): Promise<any[]> {
@@ -760,7 +760,7 @@ export class DashboardService {
       .addSelect('COALESCE(et.nombre, \'SIN EMPRESA\')', 'empresa')
       .addSelect('doc.unidad', 'placa')
       .addSelect('doc.semana', 'semana')
-      .addSelect('SUM(doc.tn_enviado)', 'tn_enviado')
+      .addSelect('SUM(doc.tn_recibida)', 'tn_recibida')
       .andWhere('doc.semana IS NOT NULL')
       .andWhere('doc.unidad IS NOT NULL');
 
