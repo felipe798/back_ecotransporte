@@ -1314,7 +1314,7 @@ export class DashboardService {
           const esTarifaFija = clienteUpper.includes('NUKLEO') || clienteUpper.includes('PAY METAL');
 
           const bi = esTarifaFija ? precioUnit : precioUnit * tnRecibida;
-          const importeTotal = bi * 1.18;
+          const importeTotal = Math.round(bi * 1.18 * 100) / 100;
           const div = (doc.divisa || 'USD').toUpperCase();
 
           semanaTn += tnRecibida;
