@@ -1039,23 +1039,24 @@ export class DashboardService {
       empresaIdToNombre.set(emp.id, emp.nombre);
     }
 
-    const unidadIdToEmpresa = new Map<number, string>();
     const placaToEmpresa = new Map<string, string>();
     for (const u of allUnidades) {
+      if (u.estado !== 'activo') continue; // Solo mapeamos las unidades activas
       const empNombre = empresaIdToNombre.get(u.empresaId) || '';
       if (empNombre) {
-        unidadIdToEmpresa.set(u.id, empNombre);
         placaToEmpresa.set(u.placa.toUpperCase().trim(), empNombre);
       }
     }
 
     const getDocEmpresa = (doc: any): string => {
-      if (doc.unidadId && unidadIdToEmpresa.has(doc.unidadId)) {
-        return unidadIdToEmpresa.get(doc.unidadId);
-      }
+      // Usamos el campo unidad (placa) para encontrar la empresa activa a la que pertenece
       const placa = (doc.unidad || '').toUpperCase().trim();
       if (placa && placaToEmpresa.has(placa)) {
         return placaToEmpresa.get(placa);
+      }
+      // Si no la encontramos por placa y el doc ya tenía empresa, usar la empresa del doc (si existe en BD)
+      if (doc.empresa && allEmpresas.some(e => e.nombre.toUpperCase().trim() === doc.empresa.toUpperCase().trim())) {
+        return doc.empresa;
       }
       return '';
     };

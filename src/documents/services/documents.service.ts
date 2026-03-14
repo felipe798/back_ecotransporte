@@ -378,7 +378,6 @@ export class DocumentsService {
     const unidadEncontrada = await this.unidadService.findByPlaca(unidad);
 
     if (unidadEncontrada) {
-      documentData.unidadId = unidadEncontrada.id;
       console.log('✓ Unidad encontrada:', unidadEncontrada.placa);
       // Asignar empresa desde la BD (siempre que exista)
       if (unidadEncontrada.empresa) {
@@ -1178,20 +1177,18 @@ export class DocumentsService {
    * Se ejecuta después de que el usuario registra nuevas empresas/unidades.
    */
   async reassociateUnregistered(): Promise<number> {
-    // Buscar documentos con placa pero sin unidadId (no asociados)
-    const docs = await this.documentsRepository.find({
-      where: { unidadId: null },
-    });
+    // Buscar documentos que tengan placa pero no tengan empresa asignada
+    const docs = await this.documentsRepository.find(); // Se debería optimizar con un queryBuilder
+    const docsSinEmpresa = docs.filter(d => d.unidad && !d.empresa);
 
     let updated = 0;
-    for (const doc of docs) {
-      if (!doc.unidad) continue;
+    for (const doc of docsSinEmpresa) {
       const unidad = await this.unidadService.findByPlaca(doc.unidad);
-      if (unidad) {
-        doc.unidadId = unidad.id;
+      if (unidad && unidad.empresa) {
+        doc.empresa = unidad.empresa.nombre;
         await this.documentsRepository.save(doc);
         updated++;
-        console.log(`✓ Documento ${doc.id} (${doc.grt}) re-asociado con placa ${unidad.placa}`);
+        console.log(`✓ Documento ${doc.id} (${doc.grt}) re-asociado con placa ${unidad.placa} y empresa ${doc.empresa}`);
       }
     }
     return updated;

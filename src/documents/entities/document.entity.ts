@@ -36,14 +36,6 @@ export class DocumentEntity {
   @JoinColumn({ name: 'updated_by' })
   updater: UserEntity;
 
-  // Relación con Unidad (placa)
-  @Column({ name: 'unidad_id', nullable: true })
-  unidadId: number;
-
-  @ManyToOne(() => UnidadEntity, { nullable: true, eager: true })
-  @JoinColumn({ name: 'unidad_id' })
-  unidadRelacion: UnidadEntity;
-
   @Column({ length: 500, nullable: true })
   pdf_file_path: string;
 

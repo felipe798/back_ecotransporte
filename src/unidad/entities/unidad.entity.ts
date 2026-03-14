@@ -15,7 +15,7 @@ export class UnidadEntity {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'varchar', length: 20, unique: true })
+  @Column({ type: 'varchar', length: 20 })
   placa: string;
 
   @Column({ name: 'empresa_id' })

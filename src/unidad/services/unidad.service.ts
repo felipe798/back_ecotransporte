@@ -39,8 +39,11 @@ export class UnidadService {
       relations: ['empresa'],
     });
 
+    // Filtramos solo las unidades activas para el matching, ya que no queremos asignar a empresas dadas de baja
+    const unidadesActivas = unidades.filter(u => u.estado === 'activo');
+
     // 1. Primero buscar coincidencia exacta
-    for (const unidad of unidades) {
+    for (const unidad of unidadesActivas) {
       const unidadPlacaNorm = unidad.placa.replace(/[\s-]/g, '').toUpperCase();
       if (unidadPlacaNorm === placaNormalizada) {
         console.log('✓ Coincidencia EXACTA encontrada:', unidad.placa);
@@ -49,7 +52,7 @@ export class UnidadService {
     }
 
     // 2. Buscar si una contiene a la otra
-    for (const unidad of unidades) {
+    for (const unidad of unidadesActivas) {
       const unidadPlacaNorm = unidad.placa.replace(/[\s-]/g, '').toUpperCase();
       if (placaNormalizada.includes(unidadPlacaNorm) ||
           unidadPlacaNorm.includes(placaNormalizada)) {
@@ -62,7 +65,7 @@ export class UnidadService {
     // Ej: "CSB886" genera "CBS886" (transposición), "C5B840" genera "CSB840" → "CBS840"
     console.log('Buscando por variantes OCR + transposición...');
     const variants = this.generarVariantesPlaca(placaNormalizada);
-    for (const unidad of unidades) {
+    for (const unidad of unidadesActivas) {
       const unidadPlacaNorm = unidad.placa.replace(/[\s-]/g, '').toUpperCase();
       if (variants.has(unidadPlacaNorm)) {
         console.log(`✓ Coincidencia por OCR/transposición: "${placaNormalizada}" → "${unidad.placa}"`);
@@ -76,7 +79,7 @@ export class UnidadService {
     let mejorSimilitud = 0;
     const umbralMinimo = 0.7; // 70% de similitud mínima
 
-    for (const unidad of unidades) {
+    for (const unidad of unidadesActivas) {
       const unidadPlacaNorm = unidad.placa.replace(/[\s-]/g, '').toUpperCase();
       const similitud = this.calcularSimilitud(placaNormalizada, unidadPlacaNorm);
       
@@ -258,17 +261,12 @@ export class UnidadService {
     if (data.placa) {
       const oldUnidad = await this.findById(id);
       if (oldUnidad && oldUnidad.placa !== data.placa) {
-        // Actualizar por unidad_id (relación directa)
-        await this.documentsRepository.update(
-          { unidadId: id },
-          { unidad: data.placa },
-        );
-        // Actualizar por texto de placa (documentos sin relación FK)
+        // Actualizar por texto de placa en los documentos
         await this.documentsRepository
           .createQueryBuilder()
           .update(DocumentEntity)
           .set({ unidad: data.placa })
-          .where('unidad = :oldPlaca AND unidad_id IS NULL', { oldPlaca: oldUnidad.placa })
+          .where('unidad = :oldPlaca', { oldPlaca: oldUnidad.placa })
           .execute();
         console.log(`Cascada: placa "${oldUnidad.placa}" → "${data.placa}" actualizada en documentos`);
       }
