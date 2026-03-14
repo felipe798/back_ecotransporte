@@ -1067,7 +1067,7 @@ export class DocumentsService {
   async getDocumentById(id: number): Promise<DocumentEntity | null> {
     return await this.documentsRepository.findOne({
       where: { id },
-      relations: ['uploader', 'uploader.userInformation', 'updater', 'unidadRelacion', 'unidadRelacion.empresa'],
+      relations: ['uploader', 'uploader.userInformation', 'updater'],
     });
   }
 
@@ -1076,8 +1076,6 @@ export class DocumentsService {
       .createQueryBuilder('doc')
       .leftJoinAndSelect('doc.uploader', 'uploader')
       .leftJoinAndSelect('uploader.userInformation', 'userInformation')
-      .leftJoinAndSelect('doc.unidadRelacion', 'unidadRelacion')
-      .leftJoinAndSelect('unidadRelacion.empresa', 'empresa')
       .orderBy(`CAST(SUBSTRING(doc.grt FROM '([0-9]+)$') AS INTEGER)`, 'ASC')
       .addOrderBy('doc.grt', 'ASC')
       .getMany();
@@ -1088,8 +1086,6 @@ export class DocumentsService {
       .createQueryBuilder('doc')
       .leftJoinAndSelect('doc.uploader', 'uploader')
       .leftJoinAndSelect('uploader.userInformation', 'userInformation')
-      .leftJoinAndSelect('doc.unidadRelacion', 'unidadRelacion')
-      .leftJoinAndSelect('unidadRelacion.empresa', 'empresa')
       .where('doc.uploaded_by = :userId', { userId })
       .orderBy(`CAST(SUBSTRING(doc.grt FROM '([0-9]+)$') AS INTEGER)`, 'ASC')
       .addOrderBy('doc.grt', 'ASC')
