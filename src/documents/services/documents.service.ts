@@ -76,25 +76,35 @@ export class DocumentsService {
         }
       }
 
-      // Calcular semana del mes en el backend (no confiar en GPT para aritmética de fechas)
-      // Regla: semana 1 = día 1 al primer domingo del mes
-      //        semana 2 = primer lunes al segundo domingo, etc.
-      if (documentData.fecha && typeof documentData.fecha === 'string') {
-        const fechaParts = (documentData.fecha as string).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (fechaParts) {
-          const year  = Number(fechaParts[1]);
-          const month = Number(fechaParts[2]) - 1; // 0-indexed
-          const day   = Number(fechaParts[3]);
-          const dateObj = new Date(year, month, day);
-          // Día de la semana del día 1 del mes (0=Dom, 1=Lun, ..., 6=Sáb)
-          const firstDayOfMonth = new Date(year, month, 1).getDay();
-          // Número de día del mes en que cae el primer domingo
-          const firstSundayDay = firstDayOfMonth === 0 ? 1 : 8 - firstDayOfMonth;
-          const weekOfMonth = day <= firstSundayDay ? 1 : 1 + Math.ceil((day - firstSundayDay) / 7);
-          documentData.semana = String(weekOfMonth);
-          const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-          documentData.mes = meses[dateObj.getMonth()];
-          console.log(`📅 Semana del mes (backend): día ${day} → semana ${weekOfMonth} de ${documentData.mes}`);
+// Calcular semana del AÑO en el backend (no confiar en GPT para aritmética de fechas)
+        // Regla: Semana ISO (1-53). La semana 1 es la que contiene el primer jueves del año.
+        if (documentData.fecha && typeof documentData.fecha === 'string') {
+          const fechaParts = (documentData.fecha as string).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (fechaParts) {
+            const year  = Number(fechaParts[1]);
+            const month = Number(fechaParts[2]) - 1; // 0-indexed
+            const day   = Number(fechaParts[3]);
+            
+            const dateObj = new Date(Date.UTC(year, month, day));
+            // Copiar la fecha para no modificar el objeto original
+            const target = new Date(dateObj.valueOf());
+            // El día de la semana (0 = domingo, 1 = lunes, ..., 6 = sábado)
+            const dayNr = (dateObj.getUTCDay() + 6) % 7; 
+            // Establecer al jueves más cercano (establece la semana ISO correcta)
+            target.setUTCDate(target.getUTCDate() - dayNr + 3);
+            const firstThursday = target.valueOf();
+            // Ir al 1 de enero del año del jueves más cercano
+            target.setUTCMonth(0, 1);
+            if (target.getUTCDay() !== 4) {
+              target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
+            }
+            // Calcular diferencia de semanas
+            const weekOfYear = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+            
+            documentData.semana = String(weekOfYear);
+            const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+            documentData.mes = meses[dateObj.getUTCMonth()];
+            console.log(`📅 Semana del AÑO (backend) para ${documentData.fecha}: Semana ${weekOfYear}`);
         }
       }
 
