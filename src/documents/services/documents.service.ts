@@ -1023,14 +1023,21 @@ export class DocumentsService {
       documentData.pcosto = Number(tarifa.precioCostoConIgv) || null;
       documentData.divisa_cost = tarifa.divisa || null;
 
-      // Calcular precio final = precio_unitario * tn_recibida
+      // Verificar si es un cliente con tarifa fija (no se multiplica por tn_recibida)
+      const esTarifaFija = ['NUKLEO PERU S.A.C.', 'PAY METAL TRADING S.A.C.'].includes(documentData.cliente?.toUpperCase() || tarifa.cliente?.toUpperCase());
+
+      // Calcular precio final
       if (documentData.precio_unitario && tn_recibida) {
-        documentData.precio_final = Number((documentData.precio_unitario * Number(tn_recibida)).toFixed(2));
+        if (esTarifaFija) {
+          documentData.precio_final = Number(documentData.precio_unitario.toFixed(2));
+        } else {
+          documentData.precio_final = Number((documentData.precio_unitario * Number(tn_recibida)).toFixed(2));
+        }
       }
 
       // Calcular costo final
       // Fórmula Excel: =SI.ERROR(SI([@[Empresa]]<>"ECOTRANSPORTE",[@PCOSTO]*[@[TN RECIBIDA]],0),"")
-      // Si transportista NO ES ECOTRANSPORTE → costo_final = pcosto * tn_recibida
+      // Si transportista NO ES ECOTRANSPORTE → costo_final = pcosto * tn_recibida (o fijo si es tarifa fija)
       // Si transportista ES ECOTRANSPORTE → costo_final = 0
       const transportista = documentData.transportista || '';
       if (transportista.toUpperCase().includes('ECOTRANSPORTE')) {
@@ -1040,7 +1047,11 @@ export class DocumentsService {
         console.log('Transportista es ECOTRANSPORTE, pcosto/costo_final/margen_operativo = 0');
       } else {
         if (documentData.pcosto && tn_recibida) {
-          documentData.costo_final = Number((documentData.pcosto * Number(tn_recibida)).toFixed(2));
+          if (esTarifaFija) {
+            documentData.costo_final = Number(documentData.pcosto.toFixed(2));
+          } else {
+            documentData.costo_final = Number((documentData.pcosto * Number(tn_recibida)).toFixed(2));
+          }
         }
         // Calcular margen operativo = precio_final - costo_final
         if (documentData.precio_final !== null && documentData.costo_final !== null) {
