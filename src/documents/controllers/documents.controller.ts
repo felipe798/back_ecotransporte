@@ -50,17 +50,14 @@ export class DocumentsController {
     console.log('> DocumentsController.uploadDocument called');
     if (!file) {
       console.warn('uploadDocument: no file received');
-      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
+      throw new HttpException('No se recibió ningún archivo', HttpStatus.BAD_REQUEST);
     }
 
     console.log(`uploadDocument: received file ${file.originalname} (${file.size} bytes, ${file.mimetype})`);
 
     if (file.mimetype !== 'application/pdf') {
       console.warn('uploadDocument: invalid mimetype', file.mimetype);
-      throw new HttpException(
-        'Only PDF files are allowed',
-        HttpStatus.BAD_REQUEST,
-      );
+      throw new HttpException('Solo se permiten archivos PDF', HttpStatus.BAD_REQUEST);
     }
 
     try {
@@ -93,9 +90,36 @@ export class DocumentsController {
       console.error('Error stack:', error.stack);
       throw new HttpException(
         {
-          message: 'Error processing document',
+          message: 'Error al procesar el documento',
           error: error.message,
         },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Post('create-manual')
+  @UseGuards(AuthGuard)
+  @UseInterceptors(BlacklistInterceptor)
+  @ApiOperation({
+    description: 'Create a document manually without uploading a PDF',
+    operationId: 'CreateManualDocument',
+  })
+  async createManualDocument(
+    @Body() body: UpdateDocumentDto,
+    @Request() req,
+  ) {
+    const userId = req.session?.id || 1;
+    try {
+      const document = await this.documentsService.createManualDocument(body, userId);
+      return {
+        success: true,
+        message: 'Documento creado exitosamente',
+        document,
+      };
+    } catch (error) {
+      throw new HttpException(
+        { message: 'Error creando documento', error: error.message },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -115,14 +139,14 @@ export class DocumentsController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) {
-      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
+      throw new HttpException('No se recibió ningún archivo', HttpStatus.BAD_REQUEST);
     }
     try {
       const url = await this.documentsService.uploadToCloudinary(file.buffer, file.originalname);
       const document = await this.documentsService.addFileUrl(id, url);
       return { success: true, url, document };
     } catch (err) {
-      throw new HttpException(err.message || 'Upload failed', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(err.message || 'Error al subir archivo', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -138,7 +162,7 @@ export class DocumentsController {
     @Body('url') url: string,
   ) {
     if (!url) {
-      throw new HttpException('URL is required', HttpStatus.BAD_REQUEST);
+      throw new HttpException('La URL es requerida', HttpStatus.BAD_REQUEST);
     }
     const document = await this.documentsService.removeFileUrl(id, url);
     return { success: true, document };
@@ -156,11 +180,11 @@ export class DocumentsController {
   ) {
     const doc = await this.documentsService.getDocumentById(id);
     if (!doc) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
     const list = doc.documentos || [];
     if (idx < 0 || idx >= list.length) {
-      throw new HttpException('File index out of range', HttpStatus.BAD_REQUEST);
+      throw new HttpException('Archivo fuera de rango', HttpStatus.BAD_REQUEST);
     }
     const url = list[idx];
     await this.documentsService.streamRemoteFile(url, res);
@@ -193,7 +217,7 @@ export class DocumentsController {
     const document = await this.documentsService.getDocumentById(id);
 
     if (!document) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
 
     return {
@@ -236,7 +260,7 @@ export class DocumentsController {
     const document = await this.documentsService.updateDocument(id, updateData, userId);
 
     if (!document) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
 
     return {
@@ -273,7 +297,7 @@ export class DocumentsController {
     const document = await this.documentsService.toggleAnulado(id);
 
     if (!document) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
 
     return {
@@ -294,7 +318,7 @@ export class DocumentsController {
     const deleted = await this.documentsService.deleteDocument(id);
 
     if (!deleted) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
 
     return {
@@ -314,7 +338,7 @@ export class DocumentsController {
     const document = await this.documentsService.recalculateDocumentFinancials(id);
 
     if (!document) {
-      throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      throw new HttpException('Documento no encontrado', HttpStatus.NOT_FOUND);
     }
 
     return {

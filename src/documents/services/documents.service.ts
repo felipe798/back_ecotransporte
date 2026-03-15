@@ -1175,24 +1175,98 @@ export class DocumentsService {
 
     await this.documentsRepository.update(id, updateData);
 
-    // Limpieza automática del motivo: si todos los campos críticos ya están
-    // completos tras esta edición, se borra el motivo automáticamente.
+    // Reconstruir motivo basado en el estado actual del documento
     const updatedDoc = await this.getDocumentById(id);
-    if (
-      updatedDoc &&
-      updatedDoc.motivo &&
-      updatedDoc.cliente &&
-      updatedDoc.partida &&
-      updatedDoc.llegada &&
-      updatedDoc.transportado &&
-      updatedDoc.precio_unitario
-    ) {
-      await this.documentsRepository.update(id, { motivo: null });
-      console.log(`✅ motivo limpiado automáticamente para doc ${id}: todos los campos críticos completos`);
-      return await this.getDocumentById(id);
+    if (updatedDoc) {
+      const motivoArray: string[] = [];
+      if (!updatedDoc.cliente) motivoArray.push('Cliente no identificado');
+      if (!updatedDoc.partida) motivoArray.push('Punto de partida no identificado');
+      if (!updatedDoc.llegada) motivoArray.push('Punto de llegada no identificado');
+      if (!updatedDoc.transportado) motivoArray.push('Material transportado no reconocido');
+      if (!updatedDoc.precio_unitario) motivoArray.push('Tarifa no encontrada');
+      if (!updatedDoc.unidad) motivoArray.push('Placa del vehículo no identificada');
+
+      const nuevoMotivo = motivoArray.length > 0 ? motivoArray.join(' | ') : null;
+      if (nuevoMotivo !== updatedDoc.motivo) {
+        await this.documentsRepository.update(id, { motivo: nuevoMotivo });
+        if (!nuevoMotivo) {
+          console.log(`✅ motivo limpiado automáticamente para doc ${id}: todos los campos críticos completos`);
+        } else {
+          console.log(`⚠️ motivo actualizado para doc ${id}: ${nuevoMotivo}`);
+        }
+        return await this.getDocumentById(id);
+      }
+
+      return updatedDoc;
     }
 
     return updatedDoc;
+  }
+
+  async createManualDocument(
+    data: Partial<DocumentEntity>,
+    userId: number,
+  ): Promise<DocumentEntity> {
+    const documentData: Partial<DocumentEntity> = { ...data, uploaded_by: userId };
+
+    // Compute mes and semana from fecha
+    if (documentData.fecha && typeof documentData.fecha === 'string') {
+      const ddmmyyyy = (documentData.fecha as string).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (ddmmyyyy) {
+        documentData.fecha = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}` as any;
+      }
+      const fechaStr = String(documentData.fecha);
+      const fechaParts = fechaStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (fechaParts) {
+        const year = Number(fechaParts[1]);
+        const month = Number(fechaParts[2]) - 1;
+        const day = Number(fechaParts[3]);
+        const dateObj = new Date(Date.UTC(year, month, day));
+        const target = new Date(dateObj.valueOf());
+        const dayNr = (dateObj.getUTCDay() + 6) % 7;
+        target.setUTCDate(target.getUTCDate() - dayNr + 3);
+        const firstThursday = target.valueOf();
+        target.setUTCMonth(0, 1);
+        if (target.getUTCDay() !== 4) {
+          target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
+        }
+        const weekOfYear = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+        documentData.semana = String(weekOfYear);
+        const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+        documentData.mes = meses[dateObj.getUTCMonth()];
+      }
+    }
+
+    // TN Recibida defaults to TN Enviado
+    if (documentData.tn_enviado && !documentData.tn_recibida) {
+      documentData.tn_recibida = documentData.tn_enviado;
+    }
+
+    // Determine deposito
+    this.determineDeposito(documentData);
+
+    // Associate unidad with empresa
+    if (documentData.unidad) {
+      const unidadEntity = await this.unidadService.findByPlaca(documentData.unidad);
+      if (unidadEntity && unidadEntity.empresa) {
+        documentData.empresa = unidadEntity.empresa.nombre;
+      }
+    }
+
+    // Calculate financial fields from tariff
+    await this.calculateFinancialFields(documentData);
+
+    // Detect missing fields
+    const motivoArray: string[] = [];
+    if (!documentData.cliente) motivoArray.push('Cliente no ingresado');
+    if (!documentData.partida) motivoArray.push('Punto de partida no ingresado');
+    if (!documentData.llegada) motivoArray.push('Punto de llegada no ingresado');
+    if (!documentData.transportado) motivoArray.push('Material no ingresado');
+    if (!documentData.precio_unitario) motivoArray.push('Tarifa no encontrada');
+    documentData.motivo = motivoArray.length > 0 ? motivoArray.join(' | ') : null;
+
+    const doc = this.documentsRepository.create(documentData);
+    return await this.documentsRepository.save(doc) as DocumentEntity;
   }
 
   async toggleAnulado(id: number): Promise<DocumentEntity | null> {

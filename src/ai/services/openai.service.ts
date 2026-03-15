@@ -627,7 +627,7 @@ Responde ÚNICAMENTE con el JSON, sin texto ni markdown adicional:
       console.error('==================================');
       throw new HttpException(
         {
-          message: 'Error processing document with OpenAI',
+          message: 'Error al procesar el documento con la IA',
           error: error.message,
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
