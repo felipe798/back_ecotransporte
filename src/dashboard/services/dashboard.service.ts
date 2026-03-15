@@ -1313,16 +1313,16 @@ export class DashboardService {
           const clienteUpper = (doc.cliente || '').toUpperCase();
           const esTarifaFija = clienteUpper.includes('NUKLEO') || clienteUpper.includes('PAY METAL');
 
-          const bi = esTarifaFija ? precioUnit : precioUnit * tnRecibida;
+          const bi = Math.round((esTarifaFija ? precioUnit : precioUnit * tnRecibida) * 100) / 100;
           const importeTotal = Math.round(bi * 1.18 * 100) / 100;
           const div = (doc.divisa || 'USD').toUpperCase();
 
           semanaTn += tnRecibida;
 
           if (div.includes('PEN') || div.includes('SOL')) {
-            placaSoles += importeTotal;
+            placaSoles += bi;
           } else {
-            placaDolares += importeTotal;
+            placaDolares += bi;
           }
 
           return {

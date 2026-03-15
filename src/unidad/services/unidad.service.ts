@@ -277,7 +277,7 @@ export class UnidadService {
   }
 
   async delete(id: number): Promise<boolean> {
-    const result = await this.unidadRepository.delete(id);
+    const result = await this.unidadRepository.update(id, { estado: 'inactivo' });
     return result.affected > 0;
   }
 
