@@ -64,6 +64,24 @@ export class DocumentsService {
         ...aiResponse.data,
       };
 
+      // Validar si existe un documento con la misma GRT (Guía de Remisión Transportista)
+      if (documentData.grt) {
+        const grtExistente = await this.documentsRepository.findOne({
+          where: { grt: documentData.grt }
+        });
+
+        if (grtExistente) {
+          throw new HttpException(
+            {
+              message: 'Documento duplicado',
+              rejected: true,
+              reason: `El documento con la GRT "${documentData.grt}" ya se encuentra registrado en el sistema.`,
+            },
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+      }
+
       // Array para acumular razones de campos incompletos
       const motivoArray: string[] = [];
 
