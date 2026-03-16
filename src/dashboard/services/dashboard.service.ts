@@ -766,6 +766,7 @@ export class DashboardService {
     if (filters.cliente) queryBuilder.andWhere('doc.cliente = :cliente', { cliente: filters.cliente });
     if (filters.unidad) queryBuilder.andWhere('doc.unidad = :unidad', { unidad: filters.unidad });
     if (filters.mes) queryBuilder.andWhere('doc.mes = :mes', { mes: filters.mes });
+    if (filters.semana) queryBuilder.andWhere('doc.semana = :semana', { semana: filters.semana });
 
     return await queryBuilder
       .groupBy('doc.cliente')
