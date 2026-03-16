@@ -88,6 +88,11 @@ export class DocumentsController {
       console.error('=== UPLOAD ERROR ===');
       console.error('Error message:', error.message);
       console.error('Error stack:', error.stack);
+      // Si ya es un HttpException (ej: duplicado GRT, documento rechazado por IA),
+      // re-lanzar tal cual para que el frontend reciba los campos rejected/reason correctos
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new HttpException(
         {
           message: 'Error al procesar el documento',

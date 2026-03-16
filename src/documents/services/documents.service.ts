@@ -306,7 +306,7 @@ export class DocumentsService {
 
     // Formato placa peruana: exactamente 6 caracteres alfanuméricos
     // Los 3 últimos deben ser dígitos, los 3 primeros letras o dígitos
-    const placaRegex = /^[A-Z0-9]{3}\d{3}$/;
+const placaRegex = /^[A-Z0-9]{6}$/;
 
     if (!placaRegex.test(unidad)) {
       console.log(`  ✗ "${unidad}" NO es una placa válida (posible TUC u otro código). Se descarta.`);
@@ -331,9 +331,10 @@ export class DocumentsService {
     // También verificar contra tablas de unidades registradas
     const registeredPlates = await this.unidadService.findAll();
     const allPlates = new Set<string>();
-    existingPlates.forEach(p => allPlates.add(p.unidad));
-    registeredPlates.forEach(u => allPlates.add(u.placa));
-
+      // Prioridad 1: tabla maestra (fuente de verdad) — va primero para que el motor OCR apunte a placas reales
+      registeredPlates.forEach(u => allPlates.add(u.placa));
+      // Prioridad 2: historial de documentos (puede contener errores OCR viejos, va después)
+      existingPlates.forEach(p => allPlates.add(p.unidad));
     const normalizedInput = this.normalizeStringAggressive(unidad);
     let bestMatch: string | null = null;
     let bestScore = 0;
