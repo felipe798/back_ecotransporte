@@ -356,6 +356,9 @@ export class DashboardController {
     if (!empresa || !mes) {
       return { error: 'Parámetros obligatorios: empresa, mes' };
     }
+    if (empresa === 'TODAS') {
+      return await this.dashboardService.getReporteGuiasTodas(mes, semana);
+    }
     return await this.dashboardService.getReporteGuias(empresa, mes, semana);
   }
 }

@@ -1374,4 +1374,54 @@ export class DashboardService {
       },
     };
   }
+
+  /**
+   * Reporte de guías emitidas para TODAS las empresas de transporte en un mes.
+   */
+  async getReporteGuiasTodas(mes: string, semana?: string): Promise<any> {
+    const empresas = await this.empresaRepository.find({
+      where: { estado: 'activo' },
+      order: { id: 'ASC' },
+    });
+
+    if (empresas.length === 0) return { error: 'No hay empresas activas' };
+
+    const allBloques: any[] = [];
+    let totalGeneralTn = 0;
+    let totalDolares = 0;
+    let totalSoles = 0;
+    const semanasGlobalSet = new Set<string>();
+
+    for (const emp of empresas) {
+      const result = await this.getReporteGuias(emp.nombre, mes, semana);
+      if (result.error) continue;
+
+      for (const s of (result.semanasDisponibles || [])) {
+        semanasGlobalSet.add(String(s));
+      }
+
+      for (const bloque of result.bloques) {
+        allBloques.push({ ...bloque, empresaNombre: emp.nombre });
+      }
+
+      totalGeneralTn += result.totalesGenerales?.totalTn || 0;
+      totalDolares += result.totalesGenerales?.totalDolares || 0;
+      totalSoles += result.totalesGenerales?.totalSoles || 0;
+    }
+
+    const semanasDisponibles = [...semanasGlobalSet].sort((a, b) => Number(a) - Number(b));
+
+    return {
+      empresa: 'Todas las empresas',
+      mes,
+      semana: semana || null,
+      semanasDisponibles,
+      bloques: allBloques,
+      totalesGenerales: {
+        totalTn: totalGeneralTn,
+        totalDolares,
+        totalSoles,
+      },
+    };
+  }
 }
