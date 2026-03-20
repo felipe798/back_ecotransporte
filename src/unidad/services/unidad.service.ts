@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { UnidadEntity } from '../entities/unidad.entity';
 import { DocumentEntity } from '../../documents/entities/document.entity';
 
@@ -13,8 +13,37 @@ export class UnidadService {
     private documentsRepository: Repository<DocumentEntity>,
   ) {}
 
+  private normalizePlaca(placa: string): string {
+    return (placa || '').replace(/[\s-]/g, '').toUpperCase().trim();
+  }
+
+  private async validateActivePlacaUniqueness(
+    placa: string,
+    estado: string,
+    currentId?: number,
+  ): Promise<void> {
+    if (!placa || estado !== 'activo') return;
+
+    const placaNormalizada = this.normalizePlaca(placa);
+    const unidades = await this.unidadRepository.find();
+
+    const conflict = unidades.find(
+      (u) =>
+        u.id !== currentId &&
+        u.estado === 'activo' &&
+        this.normalizePlaca(u.placa) === placaNormalizada,
+    );
+
+    if (conflict) {
+      throw new BadRequestException(
+        `La placa ${placaNormalizada} ya está habilitada en otra empresa. Debes deshabilitar la actual antes de habilitar esta.`,
+      );
+    }
+  }
+
   async findAll(): Promise<UnidadEntity[]> {
     return await this.unidadRepository.find({
+      where: { estado: Not('eliminado') },
       relations: ['empresa'],
       order: { id: 'ASC' },
     });
@@ -245,39 +274,57 @@ export class UnidadService {
 
   async findByEmpresa(empresaId: number): Promise<UnidadEntity[]> {
     return await this.unidadRepository.find({
-      where: { empresaId },
+      where: { empresaId, estado: Not('eliminado') },
       relations: ['empresa'],
       order: { id: 'ASC' },
     });
   }
 
   async create(data: Partial<UnidadEntity>): Promise<UnidadEntity> {
-    const unidad = this.unidadRepository.create(data);
+    const placaNormalizada = this.normalizePlaca(data.placa || '');
+    const estadoFinal = data.estado || 'activo';
+
+    await this.validateActivePlacaUniqueness(placaNormalizada, estadoFinal);
+
+    const unidad = this.unidadRepository.create({
+      ...data,
+      placa: placaNormalizada,
+      estado: estadoFinal,
+    });
     return await this.unidadRepository.save(unidad);
   }
 
   async update(id: number, data: Partial<UnidadEntity>): Promise<UnidadEntity | null> {
+    const oldUnidad = await this.findById(id);
+    if (!oldUnidad) return null;
+
+    const nuevaPlaca = this.normalizePlaca(data.placa || oldUnidad.placa);
+    const nuevoEstado = data.estado || oldUnidad.estado;
+
+    await this.validateActivePlacaUniqueness(nuevaPlaca, nuevoEstado, id);
+
     // Si se está cambiando la placa, propagar el cambio a todos los documentos
-    if (data.placa) {
-      const oldUnidad = await this.findById(id);
-      if (oldUnidad && oldUnidad.placa !== data.placa) {
-        // Actualizar por texto de placa en los documentos
-        await this.documentsRepository
-          .createQueryBuilder()
-          .update(DocumentEntity)
-          .set({ unidad: data.placa })
-          .where('unidad = :oldPlaca', { oldPlaca: oldUnidad.placa })
-          .execute();
-        console.log(`Cascada: placa "${oldUnidad.placa}" → "${data.placa}" actualizada en documentos`);
-      }
+    if (oldUnidad.placa !== nuevaPlaca) {
+      // Actualizar por texto de placa en los documentos
+      await this.documentsRepository
+        .createQueryBuilder()
+        .update(DocumentEntity)
+        .set({ unidad: nuevaPlaca })
+        .where('unidad = :oldPlaca', { oldPlaca: oldUnidad.placa })
+        .execute();
+      console.log(`Cascada: placa "${oldUnidad.placa}" → "${nuevaPlaca}" actualizada en documentos`);
     }
 
-    await this.unidadRepository.update(id, data);
+    await this.unidadRepository.update(id, {
+      ...data,
+      placa: nuevaPlaca,
+      estado: nuevoEstado,
+    });
     return await this.findById(id);
   }
 
   async delete(id: number): Promise<boolean> {
-    const result = await this.unidadRepository.update(id, { estado: 'inactivo' });
+    const result = await this.unidadRepository.update(id, { estado: 'eliminado' });
     return result.affected > 0;
   }
 
