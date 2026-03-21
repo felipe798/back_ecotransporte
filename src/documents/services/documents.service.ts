@@ -24,6 +24,72 @@ export class DocumentsService {
     private unidadService: UnidadService,
   ) {}
 
+  private normalizeFechaToUtcDate(fecha: unknown): { isoDate: string; dateUtc: Date } | null {
+    if (!fecha) return null;
+
+    if (typeof fecha === 'string') {
+      const ddmmyyyy = fecha.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (ddmmyyyy) {
+        const isoDate = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+        const year = Number(ddmmyyyy[3]);
+        const month = Number(ddmmyyyy[2]) - 1;
+        const day = Number(ddmmyyyy[1]);
+        return { isoDate, dateUtc: new Date(Date.UTC(year, month, day)) };
+      }
+
+      const fechaParts = fecha.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (fechaParts) {
+        const year = Number(fechaParts[1]);
+        const month = Number(fechaParts[2]) - 1;
+        const day = Number(fechaParts[3]);
+        return { isoDate: `${fechaParts[1]}-${fechaParts[2]}-${fechaParts[3]}`, dateUtc: new Date(Date.UTC(year, month, day)) };
+      }
+
+      const parsed = new Date(fecha);
+      if (!isNaN(parsed.getTime())) {
+        const year = parsed.getUTCFullYear();
+        const month = parsed.getUTCMonth();
+        const day = parsed.getUTCDate();
+        const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        return { isoDate, dateUtc: new Date(Date.UTC(year, month, day)) };
+      }
+
+      return null;
+    }
+
+    if (fecha instanceof Date && !isNaN(fecha.getTime())) {
+      const year = fecha.getUTCFullYear();
+      const month = fecha.getUTCMonth();
+      const day = fecha.getUTCDate();
+      const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      return { isoDate, dateUtc: new Date(Date.UTC(year, month, day)) };
+    }
+
+    return null;
+  }
+
+  // Semana del ano con inicio en domingo. Cumple: 01/03/2026 => semana 10.
+  private getWeekOfYearFromDate(dateUtc: Date): number {
+    const startOfYear = new Date(Date.UTC(dateUtc.getUTCFullYear(), 0, 1));
+    const dayOfYear = Math.floor((dateUtc.getTime() - startOfYear.getTime()) / 86400000) + 1;
+    const jan1Dow = startOfYear.getUTCDay();
+    return Math.floor((dayOfYear + jan1Dow - 1) / 7) + 1;
+  }
+
+  private assignMesSemanaFromFecha(documentData: Partial<DocumentEntity>): void {
+    const parsed = this.normalizeFechaToUtcDate(documentData.fecha as any);
+    if (!parsed) return;
+
+    const { isoDate, dateUtc } = parsed;
+    documentData.fecha = isoDate as any;
+
+    const weekOfYear = this.getWeekOfYearFromDate(dateUtc);
+    documentData.semana = String(weekOfYear);
+
+    const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    documentData.mes = meses[dateUtc.getUTCMonth()];
+  }
+
   async uploadAndProcessDocument(
     pdfBuffer: Buffer,
     fileName: string,
@@ -85,46 +151,7 @@ export class DocumentsService {
       // Array para acumular razones de campos incompletos
       const motivoArray: string[] = [];
 
-      // Normalizar fecha: convertir de DD/MM/YYYY a YYYY-MM-DD si es necesario
-      if (documentData.fecha && typeof documentData.fecha === 'string') {
-        const ddmmyyyy = (documentData.fecha as string).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-        if (ddmmyyyy) {
-          documentData.fecha = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}` as any;
-          console.log(`📅 Fecha convertida: "${ddmmyyyy[0]}" → "${documentData.fecha}"`);
-        }
-      }
-
-// Calcular semana del AÑO en el backend (no confiar en GPT para aritmética de fechas)
-        // Regla: Semana ISO (1-53). La semana 1 es la que contiene el primer jueves del año.
-        if (documentData.fecha && typeof documentData.fecha === 'string') {
-          const fechaParts = (documentData.fecha as string).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-          if (fechaParts) {
-            const year  = Number(fechaParts[1]);
-            const month = Number(fechaParts[2]) - 1; // 0-indexed
-            const day   = Number(fechaParts[3]);
-            
-            const dateObj = new Date(Date.UTC(year, month, day));
-            // Copiar la fecha para no modificar el objeto original
-            const target = new Date(dateObj.valueOf());
-            // El día de la semana (0 = domingo, 1 = lunes, ..., 6 = sábado)
-            const dayNr = (dateObj.getUTCDay() + 6) % 7; 
-            // Establecer al jueves más cercano (establece la semana ISO correcta)
-            target.setUTCDate(target.getUTCDate() - dayNr + 3);
-            const firstThursday = target.valueOf();
-            // Ir al 1 de enero del año del jueves más cercano
-            target.setUTCMonth(0, 1);
-            if (target.getUTCDay() !== 4) {
-              target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
-            }
-            // Calcular diferencia de semanas
-            const weekOfYear = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
-            
-            documentData.semana = String(weekOfYear);
-            const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-            documentData.mes = meses[dateObj.getUTCMonth()];
-            console.log(`📅 Semana del AÑO (backend) para ${documentData.fecha}: Semana ${weekOfYear}`);
-        }
-      }
+      this.assignMesSemanaFromFecha(documentData);
 
       // Por ahora TN Recibida = TN Enviado al subir la guía
       if (documentData.tn_enviado && !documentData.tn_recibida) {
@@ -1132,6 +1159,11 @@ const placaRegex = /^[A-Z0-9]{6}$/;
       updateData.updated_by = userId;
     }
 
+    // Si cambia fecha, remapear mes y semana con la regla centralizada.
+    if (updateData.fecha) {
+      this.assignMesSemanaFromFecha(updateData);
+    }
+
     // Si se actualiza tn_recibida, recalcular campos financieros
     // Usar los valores del request (updateData) si vienen, sino los de la BD (existingDoc)
     if (updateData.tn_recibida !== undefined) {
@@ -1210,33 +1242,7 @@ const placaRegex = /^[A-Z0-9]{6}$/;
   ): Promise<DocumentEntity> {
     const documentData: Partial<DocumentEntity> = { ...data, uploaded_by: userId };
 
-    // Compute mes and semana from fecha
-    if (documentData.fecha && typeof documentData.fecha === 'string') {
-      const ddmmyyyy = (documentData.fecha as string).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-      if (ddmmyyyy) {
-        documentData.fecha = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}` as any;
-      }
-      const fechaStr = String(documentData.fecha);
-      const fechaParts = fechaStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (fechaParts) {
-        const year = Number(fechaParts[1]);
-        const month = Number(fechaParts[2]) - 1;
-        const day = Number(fechaParts[3]);
-        const dateObj = new Date(Date.UTC(year, month, day));
-        const target = new Date(dateObj.valueOf());
-        const dayNr = (dateObj.getUTCDay() + 6) % 7;
-        target.setUTCDate(target.getUTCDate() - dayNr + 3);
-        const firstThursday = target.valueOf();
-        target.setUTCMonth(0, 1);
-        if (target.getUTCDay() !== 4) {
-          target.setUTCMonth(0, 1 + ((4 - target.getUTCDay()) + 7) % 7);
-        }
-        const weekOfYear = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
-        documentData.semana = String(weekOfYear);
-        const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
-        documentData.mes = meses[dateObj.getUTCMonth()];
-      }
-    }
+    this.assignMesSemanaFromFecha(documentData);
 
     // TN Recibida defaults to TN Enviado
     if (documentData.tn_enviado && !documentData.tn_recibida) {
